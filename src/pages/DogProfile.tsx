@@ -4,19 +4,19 @@ import { MoveDialog } from '../components/MoveDialog';
 import { ProgressBar } from '../components/ProgressBar';
 import { compressImageToDataUrl } from '../lib/compressImage';
 import {
-  createMilestone,
   deleteDog,
   moveDog,
   toggleChecklistCompletion,
-  toggleMilestoneCompletion,
+  toggleDogMilestoneCompletion,
   toggleReportRedFlag,
   updateDog,
   useChecklistItems,
   useDog,
   useDogCompletions,
+  useDogMilestoneCompletions,
   useFolder,
   useLocations,
-  useMilestones,
+  useMilestoneTemplates,
   useReportsForDog,
 } from '../data/store';
 import { PHASES, type Phase } from '../types';
@@ -28,16 +28,14 @@ export function DogProfile() {
   const folder = useFolder(dog?.folderId ?? null);
   const checklist = useChecklistItems(dog?.currentPhase);
   const completions = useDogCompletions(dogId ?? '');
-  const milestones = useMilestones(dogId ?? '').filter(
-    (m) => m.phase === dog?.currentPhase,
-  );
+  const milestones = useMilestoneTemplates(dog?.currentPhase);
+  const milestoneCompletions = useDogMilestoneCompletions(dogId ?? '');
   const allReports = useReportsForDog(dogId ?? '');
   const locations = useLocations();
 
   const [phaseFilter, setPhaseFilter] = useState<Phase | 'all'>('all');
   const [redFlagOnly, setRedFlagOnly] = useState(false);
   const [search, setSearch] = useState('');
-  const [milestoneTitle, setMilestoneTitle] = useState('');
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [renamingSelf, setRenamingSelf] = useState(false);
   const [selfName, setSelfName] = useState(dog?.name ?? '');
@@ -72,19 +70,6 @@ export function DogProfile() {
     } catch {
       setPhotoError("Couldn't process that photo. Try a different one.");
     }
-  }
-
-  function handleAddMilestone(e: React.FormEvent) {
-    e.preventDefault();
-    if (!milestoneTitle.trim() || !dog) return;
-    createMilestone({
-      dogId: dog.id,
-      phase: dog.currentPhase,
-      title: milestoneTitle.trim(),
-      notes: null,
-      photo: null,
-    });
-    setMilestoneTitle('');
   }
 
   function handleDeleteDog() {
@@ -206,9 +191,16 @@ export function DogProfile() {
         />
       )}
 
+      <p className="text-sm">
+        <Link to="/templates" className="text-sky-500 hover:underline">
+          ⚙️ Manage skills &amp; milestones
+        </Link>{' '}
+        <span className="text-gray-400">— changes apply to every dog</span>
+      </p>
+
       <section className="space-y-2">
         <h2 className="text-sm font-medium uppercase tracking-wide text-gray-500">
-          {dog.currentPhase} Checklist
+          {dog.currentPhase} Skills
         </h2>
         <ul className="space-y-1">
           {checklist.map((item) => {
@@ -235,7 +227,13 @@ export function DogProfile() {
             );
           })}
           {checklist.length === 0 && (
-            <p className="text-sm text-gray-400">No checklist items for this phase.</p>
+            <p className="text-sm text-gray-400">
+              No skills set up for this phase yet.{' '}
+              <Link to="/templates" className="text-sky-500 hover:underline">
+                Add some
+              </Link>
+              .
+            </p>
           )}
         </ul>
       </section>
@@ -245,42 +243,39 @@ export function DogProfile() {
           {dog.currentPhase} Milestones
         </h2>
         <ul className="space-y-1">
-          {milestones.map((m) => (
-            <li key={m.id}>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={m.completed}
-                  onChange={() => toggleMilestoneCompletion(m.id)}
-                />
-                <span
-                  className={
-                    m.completed ? 'line-through text-gray-400' : 'text-gray-800 dark:text-gray-200'
-                  }
-                >
-                  {m.title}
-                </span>
-              </label>
-            </li>
-          ))}
+          {milestones.map((m) => {
+            const completion = milestoneCompletions.find((c) => c.milestoneTemplateId === m.id);
+            return (
+              <li key={m.id}>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={completion?.completed ?? false}
+                    onChange={() => toggleDogMilestoneCompletion(dog.id, m.id)}
+                  />
+                  <span
+                    className={
+                      completion?.completed
+                        ? 'line-through text-gray-400'
+                        : 'text-gray-800 dark:text-gray-200'
+                    }
+                  >
+                    {m.title}
+                  </span>
+                </label>
+              </li>
+            );
+          })}
           {milestones.length === 0 && (
-            <p className="text-sm text-gray-400">No milestones added for this phase yet.</p>
+            <p className="text-sm text-gray-400">
+              No milestones set up for this phase yet.{' '}
+              <Link to="/templates" className="text-sky-500 hover:underline">
+                Add some
+              </Link>
+              .
+            </p>
           )}
         </ul>
-        <form onSubmit={handleAddMilestone} className="flex gap-2">
-          <input
-            value={milestoneTitle}
-            onChange={(e) => setMilestoneTitle(e.target.value)}
-            placeholder="New milestone"
-            className="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-transparent px-3 py-1.5 text-sm"
-          />
-          <button
-            type="submit"
-            className="rounded-md bg-sky-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-600"
-          >
-            Add Milestone
-          </button>
-        </form>
       </section>
 
       <section className="space-y-2">

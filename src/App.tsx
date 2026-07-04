@@ -4,6 +4,7 @@ import { LoadingScreen } from './components/LoadingScreen';
 import { Diagnostics } from './pages/Diagnostics';
 import { DogProfile } from './pages/DogProfile';
 import { FolderView } from './pages/FolderView';
+import { ManageTemplates } from './pages/ManageTemplates';
 import { NewReport } from './pages/NewReport';
 import { RedFlags } from './pages/RedFlags';
 
@@ -21,6 +22,9 @@ function App() {
           🐕 Abby's Dog Notes
         </Link>
         <div className="flex items-center gap-4">
+          <Link to="/templates" className="text-sm text-gray-500 hover:underline">
+            ⚙️ Skills &amp; Milestones
+          </Link>
           <Link to="/red-flags" className="text-sm text-red-500 hover:underline">
             🚩 Red Flags
           </Link>
@@ -36,6 +40,7 @@ function App() {
         <Route path="/dog/:dogId/report/new" element={<NewReport />} />
         <Route path="/red-flags" element={<RedFlags />} />
         <Route path="/diagnostics" element={<Diagnostics />} />
+        <Route path="/templates" element={<ManageTemplates />} />
       </Routes>
     </div>
   );

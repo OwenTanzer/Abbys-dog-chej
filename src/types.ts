@@ -67,15 +67,21 @@ export interface DogChecklistCompletion {
   notes: string | null;
 }
 
-export interface Milestone {
+export interface MilestoneTemplate {
   id: string;
-  dogId: string;
   phase: Phase;
   title: string;
+  sortOrder: number;
+  createdDate: string;
+  updatedDate: string;
+}
+
+export interface DogMilestoneCompletion {
+  id: string;
+  dogId: string;
+  milestoneTemplateId: string;
   completed: boolean;
   dateCompleted: string | null;
   notes: string | null;
   photo: string | null;
-  createdDate: string;
-  updatedDate: string;
 }
