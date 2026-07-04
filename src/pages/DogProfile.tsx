@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ProgressBar } from '../components/ProgressBar';
-import { readFileAsDataUrl } from '../lib/readFileAsDataUrl';
+import { compressImageToDataUrl } from '../lib/compressImage';
 import {
   createMilestone,
   deleteDog,
@@ -36,6 +36,7 @@ export function DogProfile() {
   const [redFlagOnly, setRedFlagOnly] = useState(false);
   const [search, setSearch] = useState('');
   const [milestoneTitle, setMilestoneTitle] = useState('');
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   const reports = useMemo(() => {
     return allReports.filter((r) => {
@@ -54,8 +55,18 @@ export function DogProfile() {
   async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !dog) return;
-    const dataUrl = await readFileAsDataUrl(file);
-    updateDog(dog.id, { profilePhoto: dataUrl });
+    setPhotoError(null);
+    try {
+      const dataUrl = await compressImageToDataUrl(file);
+      const persisted = updateDog(dog.id, { profilePhoto: dataUrl });
+      if (!persisted) {
+        setPhotoError(
+          "Photo didn't save — your browser's storage is likely full. Try removing an old photo or report.",
+        );
+      }
+    } catch {
+      setPhotoError("Couldn't process that photo. Try a different one.");
+    }
   }
 
   function handleAddMilestone(e: React.FormEvent) {
@@ -121,6 +132,7 @@ export function DogProfile() {
             </select>
           </div>
           <ProgressBar progress={dog.graduationProgress} status={dog.graduationStatus} />
+          {photoError && <p className="text-xs text-red-500">{photoError}</p>}
         </div>
       </div>
 
