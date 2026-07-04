@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { MoveDialog } from '../components/MoveDialog';
+import { PhotoCropDialog } from '../components/PhotoCropDialog';
 import { ProgressBar } from '../components/ProgressBar';
-import { compressImageToDataUrl } from '../lib/compressImage';
 import {
   deleteDog,
   moveDog,
@@ -42,6 +42,7 @@ export function DogProfile() {
   const [renamingSelf, setRenamingSelf] = useState(false);
   const [selfName, setSelfName] = useState(dog?.name ?? '');
   const [moving, setMoving] = useState(false);
+  const [pendingPhotoFile, setPendingPhotoFile] = useState<File | null>(null);
 
   const reports = useMemo(() => {
     return allReports.filter((r) => {
@@ -57,20 +58,22 @@ export function DogProfile() {
     return <p className="p-4 text-gray-500">Dog not found.</p>;
   }
 
-  async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file || !dog) return;
+    e.target.value = '';
+    if (!file) return;
     setPhotoError(null);
-    try {
-      const dataUrl = await compressImageToDataUrl(file);
-      const persisted = updateDog(dog.id, { profilePhoto: dataUrl });
-      if (!persisted) {
-        setPhotoError(
-          "Photo didn't save — your browser's storage is likely full. Try removing an old photo or report.",
-        );
-      }
-    } catch {
-      setPhotoError("Couldn't process that photo. Try a different one.");
+    setPendingPhotoFile(file);
+  }
+
+  function handleCropConfirm(dataUrl: string) {
+    setPendingPhotoFile(null);
+    if (!dog) return;
+    const persisted = updateDog(dog.id, { profilePhoto: dataUrl });
+    if (!persisted) {
+      setPhotoError(
+        "Photo didn't save — your browser's storage is likely full. Try removing an old photo or report.",
+      );
     }
   }
 
@@ -186,6 +189,13 @@ export function DogProfile() {
           {photoError && <p className="text-xs text-red-500">{photoError}</p>}
         </div>
       </div>
+      {pendingPhotoFile && (
+        <PhotoCropDialog
+          file={pendingPhotoFile}
+          onCancel={() => setPendingPhotoFile(null)}
+          onConfirm={handleCropConfirm}
+        />
+      )}
 
       <div className="flex flex-wrap gap-2">
         <Link
