@@ -63,8 +63,9 @@ export function Diagnostics() {
           Locations: {counts.locations}
         </p>
         <p>
-          Checklist items: {counts.checklistItems} · Completions: {counts.completions} ·
-          Milestones: {counts.milestones}
+          Skills: {counts.checklistItems} · Completions: {counts.completions} · Milestone
+          templates: {counts.milestoneTemplates} · Milestone completions:{' '}
+          {counts.dogMilestoneCompletions}
         </p>
         <p>Stored data size: {counts.storageBytes.toLocaleString()} bytes</p>
       </section>

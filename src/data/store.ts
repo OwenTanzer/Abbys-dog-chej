@@ -2,10 +2,11 @@ import { useSyncExternalStore } from 'react';
 import type {
   Dog,
   DogChecklistCompletion,
+  DogMilestoneCompletion,
   Folder,
   GraduationStatus,
   Location,
-  Milestone,
+  MilestoneTemplate,
   Phase,
   PhaseChecklistItem,
   TrainingReport,
@@ -49,7 +50,8 @@ export interface DatabaseCounts {
   locations: number;
   checklistItems: number;
   completions: number;
-  milestones: number;
+  milestoneTemplates: number;
+  dogMilestoneCompletions: number;
   storageBytes: number;
 }
 
@@ -62,7 +64,8 @@ export function useDatabaseCounts(): DatabaseCounts {
     locations: state.locations.length,
     checklistItems: state.checklistItems.length,
     completions: state.completions.length,
-    milestones: state.milestones.length,
+    milestoneTemplates: state.milestoneTemplates.length,
+    dogMilestoneCompletions: state.dogMilestoneCompletions.length,
     storageBytes: JSON.stringify(state).length,
   };
 }
@@ -78,12 +81,15 @@ function statusForProgress(progress: number): GraduationStatus {
 }
 
 export function computeGraduationProgress(dogId: string): number {
-  const total = db.checklistItems.length;
+  const total = db.checklistItems.length + db.milestoneTemplates.length;
   if (total === 0) return 0;
-  const completed = db.completions.filter(
+  const completedChecklist = db.completions.filter(
     (c) => c.dogId === dogId && c.completed,
   ).length;
-  return Math.round((completed / total) * 100);
+  const completedMilestones = db.dogMilestoneCompletions.filter(
+    (c) => c.dogId === dogId && c.completed,
+  ).length;
+  return Math.round(((completedChecklist + completedMilestones) / total) * 100);
 }
 
 function refreshDogProgress(dogId: string) {
@@ -93,6 +99,14 @@ function refreshDogProgress(dogId: string) {
   dog.graduationProgress = progress;
   dog.graduationStatus = statusForProgress(progress);
   dog.updatedDate = now();
+}
+
+function refreshAllDogsProgress() {
+  db.dogs.forEach((dog) => {
+    const progress = computeGraduationProgress(dog.id);
+    dog.graduationProgress = progress;
+    dog.graduationStatus = statusForProgress(progress);
+  });
 }
 
 // ---- Folders ----
@@ -230,7 +244,7 @@ export function deleteDog(id: string): void {
   db.dogs = db.dogs.filter((d) => d.id !== id);
   db.reports = db.reports.filter((r) => r.dogId !== id);
   db.completions = db.completions.filter((c) => c.dogId !== id);
-  db.milestones = db.milestones.filter((m) => m.dogId !== id);
+  db.dogMilestoneCompletions = db.dogMilestoneCompletions.filter((c) => c.dogId !== id);
   notify();
   logEvent('Dog deleted', id);
 }
@@ -309,12 +323,61 @@ export function createLocation(name: string): Location {
   return location;
 }
 
-// ---- Phase Checklists ----
+// ---- Phase Checklists (global "skills" templates) ----
 
 export function useChecklistItems(phase?: Phase): PhaseChecklistItem[] {
   const items = useDatabase().checklistItems;
   const filtered = phase ? items.filter((i) => i.phase === phase) : items;
   return [...filtered].sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+export function createChecklistItem(phase: Phase, title: string): PhaseChecklistItem {
+  const siblingCount = db.checklistItems.filter((i) => i.phase === phase).length;
+  const item: PhaseChecklistItem = {
+    id: uid(),
+    phase,
+    title,
+    description: '',
+    requiredForGraduation: true,
+    sortOrder: siblingCount,
+    createdDate: now(),
+    updatedDate: now(),
+  };
+  db.checklistItems.push(item);
+  refreshAllDogsProgress();
+  notify();
+  logEvent('Skill created', `${phase}: ${title}`);
+  return item;
+}
+
+export function renameChecklistItem(id: string, title: string): boolean {
+  const item = db.checklistItems.find((i) => i.id === id);
+  if (!item) return false;
+  item.title = title;
+  item.updatedDate = now();
+  return notify();
+}
+
+export function deleteChecklistItem(id: string): void {
+  db.checklistItems = db.checklistItems.filter((i) => i.id !== id);
+  db.completions = db.completions.filter((c) => c.checklistItemId !== id);
+  refreshAllDogsProgress();
+  notify();
+  logEvent('Skill deleted', id);
+}
+
+export function reorderChecklistItem(id: string, direction: 'up' | 'down'): void {
+  const item = db.checklistItems.find((i) => i.id === id);
+  if (!item) return;
+  const siblings = db.checklistItems
+    .filter((i) => i.phase === item.phase)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const index = siblings.findIndex((i) => i.id === id);
+  const swapIndex = direction === 'up' ? index - 1 : index + 1;
+  if (swapIndex < 0 || swapIndex >= siblings.length) return;
+  const other = siblings[swapIndex];
+  [item.sortOrder, other.sortOrder] = [other.sortOrder, item.sortOrder];
+  notify();
 }
 
 export function useDogCompletions(dogId: string): DogChecklistCompletion[] {
@@ -349,40 +412,92 @@ export function toggleChecklistCompletion(
   );
 }
 
-// ---- Milestones ----
+// ---- Milestones (global templates, like checklist items) ----
 
-export function useMilestones(dogId: string): Milestone[] {
-  return useDatabase().milestones.filter((m) => m.dogId === dogId);
+export function useMilestoneTemplates(phase?: Phase): MilestoneTemplate[] {
+  const items = useDatabase().milestoneTemplates;
+  const filtered = phase ? items.filter((m) => m.phase === phase) : items;
+  return [...filtered].sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
-export interface NewMilestoneInput {
-  dogId: string;
-  phase: Phase;
-  title: string;
-  notes: string | null;
-  photo: string | null;
-}
-
-export function createMilestone(input: NewMilestoneInput): Milestone {
-  const milestone: Milestone = {
+export function createMilestoneTemplate(phase: Phase, title: string): MilestoneTemplate {
+  const siblingCount = db.milestoneTemplates.filter((m) => m.phase === phase).length;
+  const template: MilestoneTemplate = {
     id: uid(),
-    ...input,
-    completed: false,
-    dateCompleted: null,
+    phase,
+    title,
+    sortOrder: siblingCount,
     createdDate: now(),
     updatedDate: now(),
   };
-  db.milestones.push(milestone);
+  db.milestoneTemplates.push(template);
+  refreshAllDogsProgress();
   notify();
-  logEvent('Milestone created', milestone.title);
-  return milestone;
+  logEvent('Milestone template created', `${phase}: ${title}`);
+  return template;
 }
 
-export function toggleMilestoneCompletion(id: string): void {
-  const milestone = db.milestones.find((m) => m.id === id);
-  if (!milestone) return;
-  milestone.completed = !milestone.completed;
-  milestone.dateCompleted = milestone.completed ? now() : null;
-  milestone.updatedDate = now();
+export function renameMilestoneTemplate(id: string, title: string): boolean {
+  const template = db.milestoneTemplates.find((m) => m.id === id);
+  if (!template) return false;
+  template.title = title;
+  template.updatedDate = now();
+  return notify();
+}
+
+export function deleteMilestoneTemplate(id: string): void {
+  db.milestoneTemplates = db.milestoneTemplates.filter((m) => m.id !== id);
+  db.dogMilestoneCompletions = db.dogMilestoneCompletions.filter(
+    (c) => c.milestoneTemplateId !== id,
+  );
+  refreshAllDogsProgress();
   notify();
+  logEvent('Milestone template deleted', id);
+}
+
+export function reorderMilestoneTemplate(id: string, direction: 'up' | 'down'): void {
+  const template = db.milestoneTemplates.find((m) => m.id === id);
+  if (!template) return;
+  const siblings = db.milestoneTemplates
+    .filter((m) => m.phase === template.phase)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const index = siblings.findIndex((m) => m.id === id);
+  const swapIndex = direction === 'up' ? index - 1 : index + 1;
+  if (swapIndex < 0 || swapIndex >= siblings.length) return;
+  const other = siblings[swapIndex];
+  [template.sortOrder, other.sortOrder] = [other.sortOrder, template.sortOrder];
+  notify();
+}
+
+export function useDogMilestoneCompletions(dogId: string): DogMilestoneCompletion[] {
+  return useDatabase().dogMilestoneCompletions.filter((c) => c.dogId === dogId);
+}
+
+export function toggleDogMilestoneCompletion(
+  dogId: string,
+  milestoneTemplateId: string,
+): void {
+  let completion = db.dogMilestoneCompletions.find(
+    (c) => c.dogId === dogId && c.milestoneTemplateId === milestoneTemplateId,
+  );
+  if (!completion) {
+    completion = {
+      id: uid(),
+      dogId,
+      milestoneTemplateId,
+      completed: false,
+      dateCompleted: null,
+      notes: null,
+      photo: null,
+    };
+    db.dogMilestoneCompletions.push(completion);
+  }
+  completion.completed = !completion.completed;
+  completion.dateCompleted = completion.completed ? now() : null;
+  refreshDogProgress(dogId);
+  notify();
+  logEvent(
+    'Milestone toggled',
+    `dog ${dogId}, milestone ${milestoneTemplateId} -> ${completion.completed}`,
+  );
 }

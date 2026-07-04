@@ -1,13 +1,16 @@
 import type {
   Dog,
   DogChecklistCompletion,
+  DogMilestoneCompletion,
   Folder,
   Location,
-  Milestone,
+  MilestoneTemplate,
+  Phase,
   PhaseChecklistItem,
   TrainingReport,
 } from '../types';
 import { buildDefaultChecklist } from './defaultChecklist';
+import { buildDefaultMilestones } from './defaultMilestones';
 
 export interface Database {
   folders: Folder[];
@@ -16,7 +19,8 @@ export interface Database {
   locations: Location[];
   checklistItems: PhaseChecklistItem[];
   completions: DogChecklistCompletion[];
-  milestones: Milestone[];
+  milestoneTemplates: MilestoneTemplate[];
+  dogMilestoneCompletions: DogMilestoneCompletion[];
 }
 
 const STORAGE_KEY = 'abbys-dog-chej:db:v1';
@@ -29,8 +33,95 @@ function emptyDatabase(): Database {
     locations: [],
     checklistItems: buildDefaultChecklist(),
     completions: [],
-    milestones: [],
+    milestoneTemplates: buildDefaultMilestones(),
+    dogMilestoneCompletions: [],
   };
+}
+
+// Milestones used to be freeform per-dog entries (dogId, phase, title, completed...).
+// They're now global templates shared by every dog, like checklist items, with
+// completion tracked separately per dog. This converts any old-shape data on load
+// so nobody's existing folders/dogs/reports/milestones are lost in the switch.
+interface LegacyMilestone {
+  id: string;
+  dogId: string;
+  phase: Phase;
+  title: string;
+  completed: boolean;
+  dateCompleted: string | null;
+  notes: string | null;
+  photo: string | null;
+  createdDate: string;
+  updatedDate: string;
+}
+
+function migrateLegacyMilestones(legacy: LegacyMilestone[]): {
+  milestoneTemplates: MilestoneTemplate[];
+  dogMilestoneCompletions: DogMilestoneCompletion[];
+} {
+  const milestoneTemplates: MilestoneTemplate[] = [];
+  const dogMilestoneCompletions: DogMilestoneCompletion[] = [];
+  const templateIdByKey = new Map<string, string>();
+
+  [...legacy]
+    .sort((a, b) => a.createdDate.localeCompare(b.createdDate))
+    .forEach((m) => {
+      const key = `${m.phase}::${m.title}`;
+      let templateId = templateIdByKey.get(key);
+      if (!templateId) {
+        templateId = crypto.randomUUID();
+        templateIdByKey.set(key, templateId);
+        milestoneTemplates.push({
+          id: templateId,
+          phase: m.phase,
+          title: m.title,
+          sortOrder: milestoneTemplates.length,
+          createdDate: m.createdDate,
+          updatedDate: m.updatedDate,
+        });
+      }
+      dogMilestoneCompletions.push({
+        id: m.id,
+        dogId: m.dogId,
+        milestoneTemplateId: templateId,
+        completed: m.completed,
+        dateCompleted: m.dateCompleted,
+        notes: m.notes,
+        photo: m.photo,
+      });
+    });
+
+  return { milestoneTemplates, dogMilestoneCompletions };
+}
+
+function normalizeDatabase(parsed: Record<string, unknown>): Database {
+  if (
+    Array.isArray(parsed.milestoneTemplates) &&
+    Array.isArray(parsed.dogMilestoneCompletions)
+  ) {
+    return parsed as unknown as Database;
+  }
+
+  const legacy = Array.isArray(parsed.milestones)
+    ? (parsed.milestones as LegacyMilestone[])
+    : [];
+  const migrated = migrateLegacyMilestones(legacy);
+
+  const database: Database = {
+    folders: (parsed.folders as Folder[]) ?? [],
+    dogs: (parsed.dogs as Dog[]) ?? [],
+    reports: (parsed.reports as TrainingReport[]) ?? [],
+    locations: (parsed.locations as Location[]) ?? [],
+    checklistItems: (parsed.checklistItems as PhaseChecklistItem[]) ?? buildDefaultChecklist(),
+    completions: (parsed.completions as DogChecklistCompletion[]) ?? [],
+    milestoneTemplates:
+      migrated.milestoneTemplates.length > 0
+        ? migrated.milestoneTemplates
+        : buildDefaultMilestones(),
+    dogMilestoneCompletions: migrated.dogMilestoneCompletions,
+  };
+  saveDatabase(database);
+  return database;
 }
 
 export function loadDatabase(): Database {
@@ -41,7 +132,7 @@ export function loadDatabase(): Database {
     return db;
   }
   try {
-    return JSON.parse(raw) as Database;
+    return normalizeDatabase(JSON.parse(raw));
   } catch {
     const db = emptyDatabase();
     saveDatabase(db);
