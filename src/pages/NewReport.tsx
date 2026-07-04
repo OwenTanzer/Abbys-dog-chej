@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { readFileAsDataUrl } from '../lib/readFileAsDataUrl';
+import { compressImageToDataUrl } from '../lib/compressImage';
 import { createLocation, createReport, useDog, useLocations } from '../data/store';
 import { PHASES, type Phase } from '../types';
 
@@ -16,6 +16,8 @@ export function NewReport() {
   const [newLocationName, setNewLocationName] = useState('');
   const [notes, setNotes] = useState('');
   const [picture, setPicture] = useState<string | null>(null);
+  const [pictureError, setPictureError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   if (!dog || !dogId) {
     return <p className="p-4 text-gray-500">Dog not found.</p>;
@@ -24,16 +26,22 @@ export function NewReport() {
   async function handlePictureChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setPicture(await readFileAsDataUrl(file));
+    setPictureError(null);
+    try {
+      setPicture(await compressImageToDataUrl(file));
+    } catch {
+      setPictureError("Couldn't process that photo. Try a different one.");
+    }
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setSubmitError(null);
     let finalLocationId: string | null = locationId || null;
     if (!finalLocationId && newLocationName.trim()) {
       finalLocationId = createLocation(newLocationName.trim()).id;
     }
-    createReport({
+    const { persisted } = createReport({
       dogId: dogId!,
       phase,
       redFlag,
@@ -41,6 +49,12 @@ export function NewReport() {
       notes,
       picture,
     });
+    if (!persisted) {
+      setSubmitError(
+        "This report didn't save — your browser's storage is likely full. Try removing an old photo or report, then save again.",
+      );
+      return;
+    }
     navigate(`/dog/${dogId}`);
   }
 
@@ -126,7 +140,10 @@ export function NewReport() {
           {picture && (
             <img src={picture} alt="Preview" className="mt-2 h-24 w-24 rounded-md object-cover" />
           )}
+          {pictureError && <p className="mt-1 text-xs text-red-500">{pictureError}</p>}
         </div>
+
+        {submitError && <p className="text-sm text-red-500">{submitError}</p>}
 
         <button
           type="submit"

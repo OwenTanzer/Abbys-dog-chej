@@ -11,14 +11,26 @@ import type {
   TrainingReport,
 } from '../types';
 import { loadDatabase, saveDatabase, type Database } from './db';
-import { logEvent } from '../lib/diagnostics';
+import { logError, logEvent } from '../lib/diagnostics';
 
 let db: Database = loadDatabase();
 const listeners = new Set<() => void>();
 
-function notify() {
-  saveDatabase(db);
+function notify(): boolean {
+  // Store actions mutate nested arrays/objects in place for simplicity, but
+  // useSyncExternalStore relies on reference equality to detect changes —
+  // without this shallow clone, React can skip re-rendering after a mutation
+  // and the UI won't reflect the change until something else forces a render.
+  db = { ...db };
+  const persisted = saveDatabase(db);
+  if (!persisted) {
+    logError(
+      'Local storage save failed',
+      'Browser storage is likely full. Try removing an old photo or report, then save again.',
+    );
+  }
   listeners.forEach((listener) => listener());
+  return persisted;
 }
 
 function subscribe(listener: () => void) {
@@ -157,11 +169,11 @@ export function createDog(
   return dog;
 }
 
-export function updateDog(id: string, updates: Partial<Dog>): void {
+export function updateDog(id: string, updates: Partial<Dog>): boolean {
   const dog = db.dogs.find((d) => d.id === id);
-  if (!dog) return;
+  if (!dog) return false;
   Object.assign(dog, updates, { updatedDate: now() });
-  notify();
+  return notify();
 }
 
 export function deleteDog(id: string): void {
@@ -196,7 +208,9 @@ export interface NewReportInput {
   picture: string | null;
 }
 
-export function createReport(input: NewReportInput): TrainingReport {
+export function createReport(
+  input: NewReportInput,
+): { report: TrainingReport; persisted: boolean } {
   const report: TrainingReport = {
     id: uid(),
     ...input,
@@ -210,12 +224,12 @@ export function createReport(input: NewReportInput): TrainingReport {
   }
   const dog = db.dogs.find((d) => d.id === input.dogId);
   if (dog) dog.currentPhase = input.phase;
-  notify();
+  const persisted = notify();
   logEvent(
     'Training report created',
     `dog ${input.dogId}, ${input.phase}${input.redFlag ? ', red-flagged' : ''}`,
   );
-  return report;
+  return { report, persisted };
 }
 
 export function toggleReportRedFlag(id: string): void {

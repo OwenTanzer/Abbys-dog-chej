@@ -49,6 +49,11 @@ export function loadDatabase(): Database {
   }
 }
 
-export function saveDatabase(db: Database): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+export function saveDatabase(db: Database): boolean {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+    return true;
+  } catch {
+    return false;
+  }
 }
