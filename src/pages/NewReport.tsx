@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { compressImageToDataUrl } from '../lib/compressImage';
+import { ApiError, uploadPhoto } from '../lib/api';
+import { compressImageToBlob } from '../lib/compressImage';
 import {
   createLocation,
   createReport,
@@ -22,6 +23,7 @@ export function NewReport() {
   const [newLocationName, setNewLocationName] = useState('');
   const [notes, setNotes] = useState('');
   const [picture, setPicture] = useState<string | null>(null);
+  const [pictureUploading, setPictureUploading] = useState(false);
   const [pictureError, setPictureError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [skillIds, setSkillIds] = useState<string[]>([]);
@@ -44,12 +46,22 @@ export function NewReport() {
 
   async function handlePictureChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     setPictureError(null);
+    setPictureUploading(true);
     try {
-      setPicture(await compressImageToDataUrl(file));
-    } catch {
-      setPictureError("Couldn't process that photo. Try a different one.");
+      const blob = await compressImageToBlob(file);
+      const { url } = await uploadPhoto(blob);
+      setPicture(url);
+    } catch (err) {
+      setPictureError(
+        err instanceof ApiError
+          ? err.message
+          : "Couldn't process that photo. Try a different one.",
+      );
+    } finally {
+      setPictureUploading(false);
     }
   }
 
@@ -178,7 +190,8 @@ export function NewReport() {
             Picture
           </label>
           <input type="file" accept="image/*" onChange={handlePictureChange} />
-          {picture && (
+          {pictureUploading && <p className="mt-1 text-xs text-gray-400">Uploading…</p>}
+          {picture && !pictureUploading && (
             <img src={picture} alt="Preview" className="mt-2 h-24 w-24 rounded-md object-cover" />
           )}
           {pictureError && <p className="mt-1 text-xs text-red-500">{pictureError}</p>}
@@ -188,7 +201,8 @@ export function NewReport() {
 
         <button
           type="submit"
-          className="rounded-md bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600"
+          disabled={pictureUploading}
+          className="rounded-md bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
         >
           Save Report
         </button>
