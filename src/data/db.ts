@@ -219,18 +219,39 @@ function serverCacheKey(instructorId: string): string {
   return `abbys-dog-chej:server-cache:${instructorId}`;
 }
 
-export function loadServerCache(instructorId: string): Database | null {
+export interface ServerCacheEntry {
+  blob: Database;
+  // The server's updated_at as of the last confirmed sync, not a value made
+  // up for this cache entry — callers must pass through their own
+  // lastKnownUpdatedAt. This is what lets a later PUT built from this cache
+  // (e.g. after an offline fallback) still use optimistic concurrency
+  // correctly instead of being forced into a blind unconditional write.
+  updatedAt: string | null;
+}
+
+export function loadServerCache(instructorId: string): ServerCacheEntry | null {
   try {
     const raw = localStorage.getItem(serverCacheKey(instructorId));
-    return raw ? normalizeDatabase(JSON.parse(raw)) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ServerCacheEntry> | null;
+    if (!parsed || typeof parsed !== 'object' || !parsed.blob) return null;
+    return {
+      blob: normalizeDatabase(parsed.blob as unknown as Record<string, unknown>),
+      updatedAt: parsed.updatedAt ?? null,
+    };
   } catch {
     return null;
   }
 }
 
-export function saveServerCache(instructorId: string, db: Database): boolean {
+export function saveServerCache(
+  instructorId: string,
+  blob: Database,
+  updatedAt: string | null,
+): boolean {
   try {
-    localStorage.setItem(serverCacheKey(instructorId), JSON.stringify(db));
+    const entry: ServerCacheEntry = { blob, updatedAt };
+    localStorage.setItem(serverCacheKey(instructorId), JSON.stringify(entry));
     return true;
   } catch {
     return false;

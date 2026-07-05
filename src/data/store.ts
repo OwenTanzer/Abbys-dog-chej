@@ -58,7 +58,7 @@ function notify(): boolean {
   db = { ...db };
   let persistedLocally = true;
   if (currentInstructorId) {
-    persistedLocally = saveServerCache(currentInstructorId, db);
+    persistedLocally = saveServerCache(currentInstructorId, db, lastKnownUpdatedAt);
     if (!persistedLocally) {
       logError(
         'Local cache save failed',
@@ -100,6 +100,14 @@ function runSync(): void {
       if (myGeneration !== generation) return;
       lastKnownUpdatedAt = res.updatedAt;
       syncStatus = 'synced';
+      // notify()'s cache write happens synchronously at edit time, tagged
+      // with whatever lastKnownUpdatedAt was *before* this PUT — it can't
+      // know the new value this PUT is about to confirm. Re-saving here with
+      // the blob+updatedAt pair that's now actually confirmed keeps the
+      // cache from drifting stale relative to the server, which is what an
+      // offline-fallback recovery's next save depends on to avoid a false
+      // 409 (or, with an even staler cache, a blind overwrite).
+      if (currentInstructorId) saveServerCache(currentInstructorId, blobSnapshot, res.updatedAt);
     })
     .catch((err: unknown) => {
       if (myGeneration !== generation) return;
@@ -160,7 +168,14 @@ export async function hydrateFromServer(instructorId: string): Promise<void> {
     if (err instanceof ApiError && err.status === 0) {
       const cached = loadServerCache(instructorId);
       if (cached) {
-        db = cached;
+        db = cached.blob;
+        // Carrying over the updatedAt this cache was last confirmed against
+        // (not discarding it) is what keeps optimistic concurrency intact
+        // across an offline period — without it, the next edit's PUT would
+        // go out with expectedUpdatedAt undefined, which the Worker treats
+        // as an unconditional write, silently clobbering anything written
+        // by another device in the meantime instead of correctly 409-ing.
+        lastKnownUpdatedAt = cached.updatedAt;
         hydrated = true;
         syncStatus = 'error';
         logError('Showing offline copy', "Could not reach the server, so you're seeing this device's last synced copy.");
@@ -250,7 +265,7 @@ export async function importLegacyDatabase(legacy: Database): Promise<void> {
   db = migrated;
   lastKnownUpdatedAt = updatedAt;
   syncStatus = 'synced';
-  if (currentInstructorId) saveServerCache(currentInstructorId, db);
+  if (currentInstructorId) saveServerCache(currentInstructorId, db, lastKnownUpdatedAt);
   markLegacyDataClaimed();
   notifyListeners();
 }
