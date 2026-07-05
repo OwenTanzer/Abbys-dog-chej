@@ -236,3 +236,37 @@ export function saveServerCache(instructorId: string, db: Database): boolean {
     return false;
   }
 }
+
+// Marks whether the legacy STORAGE_KEY blob has already been offered for
+// import into a server account (either imported or explicitly declined), so
+// a device isn't re-prompted on every future login.
+const LEGACY_CLAIMED_KEY = 'abbys-dog-chej:db:v1:claimed';
+
+// Side-effect-free read of the legacy key — unlike loadDatabase(), never
+// writes STORAGE_KEY, since this is only used to peek at pre-migration data
+// for the one-time import prompt, not to adopt it as the active database.
+export function peekLegacyDatabase(): Database | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? normalizeDatabase(JSON.parse(raw)) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function hasLegacyContent(db: Database): boolean {
+  return (
+    db.folders.length > 0 ||
+    db.dogs.length > 0 ||
+    db.reports.length > 0 ||
+    db.locations.length > 0
+  );
+}
+
+export function isLegacyDataClaimed(): boolean {
+  return localStorage.getItem(LEGACY_CLAIMED_KEY) === 'true';
+}
+
+export function markLegacyDataClaimed(): void {
+  localStorage.setItem(LEGACY_CLAIMED_KEY, 'true');
+}

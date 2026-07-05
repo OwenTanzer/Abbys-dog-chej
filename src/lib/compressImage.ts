@@ -34,6 +34,13 @@ function loadAndDrawToCanvas(
   });
 }
 
+// Legacy locally-stored photos are embedded as base64 data: URLs; fetch()
+// supports data: URLs directly, so this is all conversion to a Blob needs.
+export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
 export async function compressImageToBlob(
   file: File,
   maxDimension = 1024,

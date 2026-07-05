@@ -3,7 +3,17 @@ import { Link, Route, Routes } from 'react-router-dom';
 import { LoadingScreen } from './components/LoadingScreen';
 import { ThemeToggle } from './components/ThemeToggle';
 import { logout, useSession } from './lib/auth';
-import { hydrateFromServer, resetLocalStore, seedDefaultTemplatesIfEmpty, useHydrated, useSyncStatus } from './data/store';
+import {
+  declineLegacyImport,
+  getImportableLegacyDatabase,
+  hydrateFromServer,
+  importLegacyDatabase,
+  resetLocalStore,
+  seedDefaultTemplatesIfEmpty,
+  useHydrated,
+  useSyncStatus,
+} from './data/store';
+import type { Database } from './data/db';
 import { Diagnostics } from './pages/Diagnostics';
 import { DogProfile } from './pages/DogProfile';
 import { FolderView } from './pages/FolderView';
@@ -18,6 +28,9 @@ function App() {
   const hydrated = useHydrated();
   const syncStatus = useSyncStatus();
   const [hydrateError, setHydrateError] = useState<string | null>(null);
+  const [legacyImport, setLegacyImport] = useState<Database | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
 
   useEffect(() => {
     if (session) return;
@@ -29,7 +42,10 @@ function App() {
     let cancelled = false;
     setHydrateError(null);
     hydrateFromServer(session.instructorId)
-      .then(() => seedDefaultTemplatesIfEmpty())
+      .then(() => {
+        seedDefaultTemplatesIfEmpty();
+        if (!cancelled) setLegacyImport(getImportableLegacyDatabase());
+      })
       .catch((err: unknown) => {
         if (!cancelled) {
           setHydrateError(err instanceof Error ? err.message : "Couldn't load your data.");
@@ -39,6 +55,23 @@ function App() {
       cancelled = true;
     };
   }, [session]);
+
+  function handleImportLegacy() {
+    if (!legacyImport) return;
+    setImporting(true);
+    setImportError(null);
+    importLegacyDatabase(legacyImport)
+      .then(() => setLegacyImport(null))
+      .catch((err: unknown) => {
+        setImportError(err instanceof Error ? err.message : "Couldn't import that data.");
+      })
+      .finally(() => setImporting(false));
+  }
+
+  function handleDeclineLegacy() {
+    declineLegacyImport();
+    setLegacyImport(null);
+  }
 
   if (!splashDone) {
     return <LoadingScreen onFinish={() => setSplashDone(true)} />;
@@ -66,6 +99,38 @@ function App() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-900">
         <p className="text-sm text-gray-400">Loading your data…</p>
+      </div>
+    );
+  }
+
+  if (legacyImport) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6 text-center bg-white dark:bg-gray-900">
+        <p className="text-lg font-semibold">We found existing data on this device</p>
+        <p className="max-w-sm text-sm text-gray-500">
+          From before accounts existed: {legacyImport.folders.length} folder
+          {legacyImport.folders.length === 1 ? '' : 's'}, {legacyImport.dogs.length} dog
+          {legacyImport.dogs.length === 1 ? '' : 's'}, and {legacyImport.reports.length} training
+          report{legacyImport.reports.length === 1 ? '' : 's'}. Import it into your account so it's
+          saved to the server and available on your other devices?
+        </p>
+        {importError && <p className="text-sm text-red-500">{importError}</p>}
+        <div className="flex gap-2">
+          <button
+            onClick={handleDeclineLegacy}
+            disabled={importing}
+            className="rounded-md border border-gray-300 dark:border-gray-600 px-4 py-2 text-sm disabled:opacity-50"
+          >
+            Not now
+          </button>
+          <button
+            onClick={handleImportLegacy}
+            disabled={importing}
+            className="rounded-md bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+          >
+            {importing ? 'Importing…' : 'Import my data'}
+          </button>
+        </div>
       </div>
     );
   }

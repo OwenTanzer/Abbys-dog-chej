@@ -13,13 +13,18 @@ import type {
 } from '../types';
 import {
   emptyDatabase,
+  hasLegacyContent,
+  isLegacyDataClaimed,
   loadServerCache,
+  markLegacyDataClaimed,
   normalizeDatabase,
+  peekLegacyDatabase,
   saveServerCache,
   type Database,
 } from './db';
 import { logError, logEvent } from '../lib/diagnostics';
-import { ApiError, fetchData, putData } from '../lib/api';
+import { ApiError, fetchData, putData, uploadPhoto } from '../lib/api';
+import { dataUrlToBlob } from '../lib/compressImage';
 
 let db: Database = emptyDatabase();
 let currentInstructorId: string | null = null;
@@ -151,6 +156,71 @@ export function seedDefaultTemplatesIfEmpty(): void {
   db = { ...db, checklistItems: defaults.checklistItems, milestoneTemplates: defaults.milestoneTemplates };
   notifyListeners();
   syncToServer();
+}
+
+// Only offered once per device: if this device already ran the pre-backend
+// version of the app, it has real data sitting in the legacy single-browser
+// key. Only surfaced when the signed-in account's server blob is still empty
+// — never offered against an account that already has real data, since
+// importing would silently overwrite it via a whole-blob PUT.
+export function getImportableLegacyDatabase(): Database | null {
+  if (isLegacyDataClaimed()) return null;
+  if (hasLegacyContent(db)) return null;
+  const legacy = peekLegacyDatabase();
+  return legacy && hasLegacyContent(legacy) ? legacy : null;
+}
+
+export function declineLegacyImport(): void {
+  markLegacyDataClaimed();
+}
+
+async function uploadEmbeddedPhoto(value: string | null): Promise<string | null> {
+  if (!value || !value.startsWith('data:')) return value;
+  const blob = await dataUrlToBlob(value);
+  const { url } = await uploadPhoto(blob);
+  return url;
+}
+
+// Legacy photos are embedded as base64 data: URLs; the server blob expects
+// R2 URLs instead, so each one is uploaded individually before the whole-blob
+// PUT. Left un-caught on failure (see importLegacyDatabase) so the caller can
+// offer a retry rather than importing with some photos silently dropped.
+async function migratePhotosToServer(source: Database): Promise<Database> {
+  const dogs = await Promise.all(
+    source.dogs.map(async (dog) => ({
+      ...dog,
+      profilePhoto: await uploadEmbeddedPhoto(dog.profilePhoto),
+    })),
+  );
+  const reports = await Promise.all(
+    source.reports.map(async (report) => ({
+      ...report,
+      picture: await uploadEmbeddedPhoto(report.picture),
+    })),
+  );
+  const dogMilestoneCompletions = await Promise.all(
+    source.dogMilestoneCompletions.map(async (completion) => ({
+      ...completion,
+      photo: await uploadEmbeddedPhoto(completion.photo),
+    })),
+  );
+  return { ...source, dogs, reports, dogMilestoneCompletions };
+}
+
+// Runs outside the normal serialized sync queue and awaits the PUT directly
+// (rather than the fire-and-forget syncToServer()) so the caller can show a
+// real success/failure result and only mark the legacy data claimed once
+// it's actually confirmed saved on the server.
+export async function importLegacyDatabase(legacy: Database): Promise<void> {
+  const migrated = await migratePhotosToServer(legacy);
+  const expectedUpdatedAt = lastKnownUpdatedAt ?? undefined;
+  const { updatedAt } = await putData(migrated, expectedUpdatedAt);
+  db = migrated;
+  lastKnownUpdatedAt = updatedAt;
+  syncStatus = 'synced';
+  if (currentInstructorId) saveServerCache(currentInstructorId, db);
+  markLegacyDataClaimed();
+  notifyListeners();
 }
 
 export function resetLocalStore(): void {
