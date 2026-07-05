@@ -45,8 +45,15 @@ function App() {
     setHydrateError(null);
     hydrateFromServer(session.instructorId)
       .then(() => {
+        // A cancelled effect is dead — it must not read, write, or query
+        // store state at all, not just skip its own setState calls.
+        // hydrateFromServer() can resolve normally even when it internally
+        // no-oped on a stale generation, so this .then() can still fire for
+        // an effect instance React has already cleaned up (concretely: every
+        // login under StrictMode's double-invoke).
+        if (cancelled) return;
         seedDefaultTemplatesIfEmpty();
-        if (!cancelled) setLegacyImport(getImportableLegacyDatabase());
+        setLegacyImport(getImportableLegacyDatabase());
       })
       .catch((err: unknown) => {
         if (!cancelled) {
