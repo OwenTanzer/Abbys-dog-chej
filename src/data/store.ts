@@ -199,11 +199,17 @@ export function seedDefaultTemplatesIfEmpty(): void {
   syncToServer();
 }
 
-// Only offered once per device: if this device already ran the pre-backend
-// version of the app, it has real data sitting in the legacy single-browser
-// key. Only surfaced when the signed-in account's server blob is still empty
-// — never offered against an account that already has real data, since
-// importing would silently overwrite it via a whole-blob PUT.
+// If this device already ran the pre-backend version of the app, it has real
+// data sitting in the legacy single-browser key. Only surfaced when the
+// signed-in account's server blob is still empty — never offered against an
+// account that already has real data, since importing would silently
+// overwrite it via a whole-blob PUT.
+//
+// This stays available across dismissals on purpose: the legacy blob is only
+// ever marked claimed by a *successful* import or an *explicit* "I don't want
+// this" decline (see declineLegacyImport), never by a casual "not now" —
+// closing the prompt, reloading, or navigating away must not burn the one
+// obvious bridge back to a device's only copy of its pre-account data.
 export function getImportableLegacyDatabase(): Database | null {
   if (isLegacyDataClaimed()) return null;
   if (hasLegacyContent(db)) return null;
@@ -211,8 +217,21 @@ export function getImportableLegacyDatabase(): Database | null {
   return legacy && hasLegacyContent(legacy) ? legacy : null;
 }
 
+// Permanently stops offering the import. Only call this from an explicit,
+// deliberately-confirmed "I don't want to import this" action — never from a
+// plain dismiss/"not now", which should just hide the prompt for now without
+// touching this.
 export function declineLegacyImport(): void {
   markLegacyDataClaimed();
+  notifyListeners();
+}
+
+// Reactive (unlike calling getImportableLegacyDatabase() directly in a render
+// body), so a badge driven by this updates the moment an import completes or
+// gets declined elsewhere — e.g. from the Diagnostics page, a route Diagnostics
+// itself is mounted under, not the component holding this hook.
+export function useLegacyImportAvailable(): boolean {
+  return useSyncExternalStore(subscribe, () => getImportableLegacyDatabase() !== null);
 }
 
 async function uploadEmbeddedPhoto(value: string | null): Promise<string | null> {

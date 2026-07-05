@@ -11,6 +11,7 @@ import {
   resetLocalStore,
   seedDefaultTemplatesIfEmpty,
   useHydrated,
+  useLegacyImportAvailable,
   useSyncStatus,
 } from './data/store';
 import type { Database } from './data/db';
@@ -27,6 +28,7 @@ function App() {
   const session = useSession();
   const hydrated = useHydrated();
   const syncStatus = useSyncStatus();
+  const legacyImportAvailable = useLegacyImportAvailable();
   const [hydrateError, setHydrateError] = useState<string | null>(null);
   const [legacyImport, setLegacyImport] = useState<Database | null>(null);
   const [importing, setImporting] = useState(false);
@@ -68,7 +70,23 @@ function App() {
       .finally(() => setImporting(false));
   }
 
-  function handleDeclineLegacy() {
+  // Dismissing is deliberately non-destructive — it only hides the prompt for
+  // this app load. The legacy data stays available (a fresh login, or the
+  // Diagnostics page, will offer it again) until it's actually imported or
+  // explicitly declined below. A device that still holds the only copy of
+  // someone's pre-account data shouldn't lose the obvious way back to it just
+  // because they were busy, confused, or wanted to ask first.
+  function handleDismissLegacyPrompt() {
+    setLegacyImport(null);
+  }
+
+  // This is the one action that permanently gives up the import — gated
+  // behind a confirm() so it can't be hit by the same casual tap as "Not now".
+  function handlePermanentlyDeclineLegacy() {
+    const confirmed = window.confirm(
+      "Don't import this data? This can't be undone — this device won't offer to import it again.",
+    );
+    if (!confirmed) return;
     declineLegacyImport();
     setLegacyImport(null);
   }
@@ -117,7 +135,7 @@ function App() {
         {importError && <p className="text-sm text-red-500">{importError}</p>}
         <div className="flex gap-2">
           <button
-            onClick={handleDeclineLegacy}
+            onClick={handleDismissLegacyPrompt}
             disabled={importing}
             className="rounded-md border border-gray-300 dark:border-gray-600 px-4 py-2 text-sm disabled:opacity-50"
           >
@@ -131,6 +149,16 @@ function App() {
             {importing ? 'Importing…' : 'Import my data'}
           </button>
         </div>
+        <button
+          onClick={handlePermanentlyDeclineLegacy}
+          disabled={importing}
+          className="text-xs text-gray-400 hover:underline disabled:opacity-50"
+        >
+          This isn't my data — don't ask again
+        </button>
+        <p className="max-w-sm text-xs text-gray-400">
+          Not ready yet? You can pick this back up later from the Diagnostics page.
+        </p>
       </div>
     );
   }
@@ -150,6 +178,12 @@ function App() {
           </Link>
           <Link to="/diagnostics" className="text-sm text-gray-500 hover:underline">
             🩺 Diagnostics
+            {legacyImportAvailable && (
+              <span
+                title="There's data from before accounts existed you can still import"
+                className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
+              />
+            )}
           </Link>
           {syncStatus === 'error' && (
             <span title="Some changes may not be saved to the server yet" className="text-xs text-amber-500">
