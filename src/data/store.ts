@@ -682,8 +682,6 @@ export function createReport(
     const location = db.locations.find((l) => l.id === input.locationId);
     if (location) location.lastUsedDate = now();
   }
-  const dog = db.dogs.find((d) => d.id === input.dogId);
-  if (dog) dog.currentPhase = input.phase;
   markSkillsInProgress(input.dogId, input.skillIds);
   const persisted = notify();
   logEvent(
