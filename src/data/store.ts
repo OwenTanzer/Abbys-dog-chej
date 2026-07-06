@@ -652,6 +652,22 @@ function markSkillsInProgress(dogId: string, skillIds: string[]) {
   });
 }
 
+// "In progress" is derived from which reports mention a skill — markSkillsInProgress
+// sets it, but nothing ever unsets it, so editing a report to drop a skill or
+// deleting a report outright would otherwise leave that flag stuck on. Called
+// after any edit/delete, this re-scans the dog's remaining reports and clears
+// inProgress on any not-yet-completed skill no longer referenced by any of them.
+function recomputeDogSkillProgress(dogId: string): void {
+  const referencedSkillIds = new Set(
+    db.reports.filter((r) => r.dogId === dogId).flatMap((r) => r.skillIds),
+  );
+  db.completions.forEach((c) => {
+    if (c.dogId === dogId && c.inProgress && !c.completed && !referencedSkillIds.has(c.checklistItemId)) {
+      c.inProgress = false;
+    }
+  });
+}
+
 export function createReport(
   input: NewReportInput,
 ): { report: TrainingReport; persisted: boolean } {
@@ -666,8 +682,6 @@ export function createReport(
     const location = db.locations.find((l) => l.id === input.locationId);
     if (location) location.lastUsedDate = now();
   }
-  const dog = db.dogs.find((d) => d.id === input.dogId);
-  if (dog) dog.currentPhase = input.phase;
   markSkillsInProgress(input.dogId, input.skillIds);
   const persisted = notify();
   logEvent(
@@ -684,6 +698,39 @@ export function toggleReportRedFlag(id: string): void {
   report.updatedDate = now();
   notify();
   logEvent('Report red flag toggled', `report ${id} -> ${report.redFlag}`);
+}
+
+export interface UpdateReportInput {
+  phase: Phase;
+  redFlag: boolean;
+  locationId: string | null;
+  notes: string;
+  picture: string | null;
+  skillIds: string[];
+}
+
+export function updateReport(id: string, updates: UpdateReportInput): boolean {
+  const report = db.reports.find((r) => r.id === id);
+  if (!report) return false;
+  Object.assign(report, updates, { updatedDate: now() });
+  if (updates.locationId) {
+    const location = db.locations.find((l) => l.id === updates.locationId);
+    if (location) location.lastUsedDate = now();
+  }
+  markSkillsInProgress(report.dogId, updates.skillIds);
+  recomputeDogSkillProgress(report.dogId);
+  const persisted = notify();
+  logEvent('Report updated', id);
+  return persisted;
+}
+
+export function deleteReport(id: string): void {
+  const report = db.reports.find((r) => r.id === id);
+  if (!report) return;
+  db.reports = db.reports.filter((r) => r.id !== id);
+  recomputeDogSkillProgress(report.dogId);
+  notify();
+  logEvent('Report deleted', id);
 }
 
 // ---- Locations ----

@@ -9,7 +9,6 @@ import {
   useDog,
   useLocations,
 } from '../data/store';
-import { PHASES, type Phase } from '../types';
 
 export function NewReport() {
   const { dogId } = useParams<{ dogId: string }>();
@@ -17,7 +16,6 @@ export function NewReport() {
   const dog = useDog(dogId);
   const locations = useLocations();
 
-  const [phase, setPhase] = useState<Phase>(dog?.currentPhase ?? 'Phase 1');
   const [redFlag, setRedFlag] = useState(false);
   const [locationId, setLocationId] = useState('');
   const [newLocationName, setNewLocationName] = useState('');
@@ -35,7 +33,7 @@ export function NewReport() {
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [skillIds, setSkillIds] = useState<string[]>([]);
-  const skillsForPhase = useChecklistItems(phase);
+  const skillsForPhase = useChecklistItems(dog?.currentPhase);
 
   useEffect(() => {
     if (!pictureFile) return;
@@ -46,11 +44,6 @@ export function NewReport() {
 
   if (!dog || !dogId) {
     return <p className="p-4 text-gray-500">Dog not found.</p>;
-  }
-
-  function handlePhaseChange(next: Phase) {
-    setPhase(next);
-    setSkillIds([]);
   }
 
   function toggleSkill(id: string) {
@@ -87,7 +80,7 @@ export function NewReport() {
       }
       const { persisted } = createReport({
         dogId: dogId!,
-        phase,
+        phase: dog!.currentPhase,
         redFlag,
         locationId: finalLocationId,
         notes,
@@ -124,17 +117,12 @@ export function NewReport() {
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Phase
           </label>
-          <select
-            value={phase}
-            onChange={(e) => handlePhaseChange(e.target.value as Phase)}
-            className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-transparent px-3 py-2"
-          >
-            {PHASES.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          <p className="rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-2 text-gray-700 dark:text-gray-300">
+            {dog.currentPhase}{' '}
+            <span className="text-xs text-gray-400">
+              — change {dog.name}'s phase from their profile
+            </span>
+          </p>
         </div>
 
         <div>
@@ -153,7 +141,7 @@ export function NewReport() {
               </label>
             ))}
             {skillsForPhase.length === 0 && (
-              <p className="text-sm text-gray-400">No skills set up for {phase} yet.</p>
+              <p className="text-sm text-gray-400">No skills set up for {dog.currentPhase} yet.</p>
             )}
           </div>
         </div>
