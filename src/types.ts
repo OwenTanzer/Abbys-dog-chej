@@ -8,6 +8,27 @@ export type GraduationStatus =
   | 'Near Graduation'
   | 'Graduated';
 
+export type DistractionSeverity = 'Absent' | 'Mild' | 'Moderate' | 'Severe';
+
+export const DISTRACTION_SEVERITIES: DistractionSeverity[] = [
+  'Absent',
+  'Mild',
+  'Moderate',
+  'Severe',
+];
+
+// A manageable, shared-across-phases list of distraction types a trainer can
+// tag on a training log — same spirit as skills/milestones (#36), but not
+// phase-scoped since a distraction (traffic, other dogs, food) can come up in
+// any phase.
+export interface DistractionTemplate {
+  id: string;
+  title: string;
+  sortOrder: number;
+  createdDate: string;
+  updatedDate: string;
+}
+
 export interface Folder {
   id: string;
   name: string;
@@ -39,6 +60,11 @@ export interface Dog {
   updatedDate: string;
 }
 
+export interface DistractionObservation {
+  distractionId: string;
+  severity: DistractionSeverity;
+}
+
 export interface TrainingReport {
   id: string;
   dogId: string;
@@ -48,6 +74,8 @@ export interface TrainingReport {
   notes: string;
   picture: string | null;
   skillIds: string[];
+  milestoneIds: string[];
+  distractions: DistractionObservation[];
   createdDate: string;
   updatedDate: string;
 }

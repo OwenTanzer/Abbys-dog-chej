@@ -2,6 +2,7 @@ import type {
   Dog,
   DogChecklistCompletion,
   DogMilestoneCompletion,
+  DistractionTemplate,
   Folder,
   Location,
   MilestoneTemplate,
@@ -21,6 +22,7 @@ export interface Database {
   completions: DogChecklistCompletion[];
   milestoneTemplates: MilestoneTemplate[];
   dogMilestoneCompletions: DogMilestoneCompletion[];
+  distractionTemplates: DistractionTemplate[];
   // One-time gate for migrateLegacyDefaultTemplates() (#30) — true means this
   // account's checklist/milestones either started on, or have already been
   // upgraded to, Abby's real defaults, so the migration must never touch them
@@ -42,6 +44,7 @@ export function emptyDatabase(): Database {
     completions: [],
     milestoneTemplates: buildDefaultMilestones(),
     dogMilestoneCompletions: [],
+    distractionTemplates: [],
     templatesMigratedToAbbyDefaults: true,
   };
 }
@@ -139,11 +142,14 @@ function backfillFolders(folders: Folder[]): Folder[] {
   return backfillSortOrder(folders, (folder) => folder.parentFolderId ?? 'root');
 }
 
-// Reports predating "skills worked on" (#18) won't have skillIds stored.
+// Reports predating "skills worked on" (#18), "milestones worked on" and
+// "distractions encountered" (#35/#36) won't have these fields stored.
 function backfillReports(reports: TrainingReport[]): TrainingReport[] {
   return reports.map((report) => ({
     ...report,
     skillIds: report.skillIds ?? [],
+    milestoneIds: report.milestoneIds ?? [],
+    distractions: report.distractions ?? [],
   }));
 }
 
@@ -167,6 +173,8 @@ export function normalizeDatabase(parsed: Record<string, unknown>): Database {
     database.dogs = backfillDogs(database.dogs ?? []);
     database.reports = backfillReports(database.reports ?? []);
     database.completions = backfillCompletions(database.completions ?? []);
+    // Accounts predating distraction templates (#36) won't have this field at all.
+    database.distractionTemplates = database.distractionTemplates ?? [];
     // Accounts persisted before #30 won't have this field at all — treat its
     // absence as "not yet migrated" so migrateLegacyDefaultTemplates() runs
     // for them exactly once.
@@ -191,6 +199,7 @@ export function normalizeDatabase(parsed: Record<string, unknown>): Database {
         ? migrated.milestoneTemplates
         : buildDefaultMilestones(),
     dogMilestoneCompletions: migrated.dogMilestoneCompletions,
+    distractionTemplates: (parsed.distractionTemplates as DistractionTemplate[]) ?? [],
     templatesMigratedToAbbyDefaults: (parsed.templatesMigratedToAbbyDefaults as boolean | undefined) ?? false,
   };
   return database;

@@ -1,6 +1,8 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type {
   Dog,
+  DistractionObservation,
+  DistractionTemplate,
   DogChecklistCompletion,
   DogMilestoneCompletion,
   Folder,
@@ -411,6 +413,7 @@ export interface DatabaseCounts {
   completions: number;
   milestoneTemplates: number;
   dogMilestoneCompletions: number;
+  distractionTemplates: number;
   storageBytes: number;
 }
 
@@ -425,6 +428,7 @@ export function useDatabaseCounts(): DatabaseCounts {
     completions: state.completions.length,
     milestoneTemplates: state.milestoneTemplates.length,
     dogMilestoneCompletions: state.dogMilestoneCompletions.length,
+    distractionTemplates: state.distractionTemplates.length,
     storageBytes: JSON.stringify(state).length,
   };
 }
@@ -770,6 +774,35 @@ export function useReportsForDog(dogId: string): TrainingReport[] {
     .sort((a, b) => b.createdDate.localeCompare(a.createdDate));
 }
 
+// Session counts (#35) are purely informational — derived from how many of a
+// dog's logs mention a skill/milestone as worked on, independent of whether
+// it's since been marked complete. Nothing here drives completion; the
+// trainer still does that explicitly via toggleChecklistCompletion /
+// toggleDogMilestoneCompletion.
+export function useDogSkillSessionCounts(dogId: string): Record<string, number> {
+  const reports = useDatabase().reports;
+  const counts: Record<string, number> = {};
+  reports.forEach((r) => {
+    if (r.dogId !== dogId) return;
+    r.skillIds.forEach((id) => {
+      counts[id] = (counts[id] ?? 0) + 1;
+    });
+  });
+  return counts;
+}
+
+export function useDogMilestoneSessionCounts(dogId: string): Record<string, number> {
+  const reports = useDatabase().reports;
+  const counts: Record<string, number> = {};
+  reports.forEach((r) => {
+    if (r.dogId !== dogId) return;
+    r.milestoneIds.forEach((id) => {
+      counts[id] = (counts[id] ?? 0) + 1;
+    });
+  });
+  return counts;
+}
+
 function isLocalToday(dateIso: string): boolean {
   const d = new Date(dateIso);
   const today = new Date();
@@ -828,6 +861,8 @@ export interface NewReportInput {
   notes: string;
   picture: string | null;
   skillIds: string[];
+  milestoneIds: string[];
+  distractions: DistractionObservation[];
 }
 
 function markSkillsInProgress(dogId: string, skillIds: string[]) {
@@ -908,6 +943,8 @@ export interface UpdateReportInput {
   notes: string;
   picture: string | null;
   skillIds: string[];
+  milestoneIds: string[];
+  distractions: DistractionObservation[];
 }
 
 export function updateReport(id: string, updates: UpdateReportInput): boolean {
@@ -1151,4 +1188,166 @@ export function toggleDogMilestoneCompletion(
     'Milestone toggled',
     `dog ${dogId}, milestone ${milestoneTemplateId} -> ${completion.completed}`,
   );
+}
+
+// ---- Distraction Templates (global, shared across phases) (#36) ----
+
+export function useDistractionTemplates(): DistractionTemplate[] {
+  return [...useDatabase().distractionTemplates].sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+export function createDistractionTemplate(title: string): DistractionTemplate {
+  const template: DistractionTemplate = {
+    id: uid(),
+    title,
+    sortOrder: db.distractionTemplates.length,
+    createdDate: now(),
+    updatedDate: now(),
+  };
+  db.distractionTemplates.push(template);
+  notify();
+  logEvent('Distraction template created', title);
+  return template;
+}
+
+export function renameDistractionTemplate(id: string, title: string): boolean {
+  const template = db.distractionTemplates.find((d) => d.id === id);
+  if (!template) return false;
+  template.title = title;
+  template.updatedDate = now();
+  return notify();
+}
+
+export function deleteDistractionTemplate(id: string): void {
+  db.distractionTemplates = db.distractionTemplates.filter((d) => d.id !== id);
+  db.reports.forEach((r) => {
+    r.distractions = r.distractions.filter((d) => d.distractionId !== id);
+  });
+  notify();
+  logEvent('Distraction template deleted', id);
+}
+
+export function reorderDistractionTemplates(orderedIds: string[]): void {
+  orderedIds.forEach((id, index) => {
+    const template = db.distractionTemplates.find((d) => d.id === id);
+    if (template) template.sortOrder = index;
+  });
+  notify();
+  logEvent('Distraction templates reordered', '');
+}
+
+// ---- Trainer History dashboard (#27) ----
+//
+// Everything here is derived from this account's own db state — there is no
+// cross-instructor aggregation to guard against, since each instructor's data
+// is already a wholly separate server blob (see hydrateFromServer). Success
+// rate is deliberately not computed here; that depends on the outcome model
+// from #32/#33/#34, which hasn't landed yet.
+
+export interface SkillWorkedCount {
+  checklistItemId: string;
+  title: string;
+  phase: Phase;
+  count: number;
+}
+
+export interface DogActivitySummary {
+  dog: Dog;
+  lastWorkedDate: string | null;
+}
+
+export interface TrainerHistoryStats {
+  totalDogs: number;
+  activeDogs: number;
+  graduatedDogs: number;
+  releasedDogs: number;
+  totalLogs: number;
+  logsThisWeek: number;
+  logsThisMonth: number;
+  milestonesCompleted: number;
+  skillsWorkedOnTotal: number;
+  mostWorkedSkills: SkillWorkedCount[];
+  recentlyWorkedDogs: DogActivitySummary[];
+  dogsNotWorkedRecently: DogActivitySummary[];
+}
+
+const NOT_WORKED_RECENTLY_DAYS = 14;
+
+function daysAgoIso(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString();
+}
+
+export function useTrainerHistoryStats(): TrainerHistoryStats {
+  const state = useDatabase();
+
+  return useMemo(() => {
+    const { dogs, reports, checklistItems, dogMilestoneCompletions } = state;
+
+    const graduatedDogs = dogs.filter((d) => d.graduated).length;
+    const releasedDogs = dogs.filter((d) => d.released).length;
+    const activeDogs = dogs.filter((d) => !d.graduated && !d.released).length;
+
+    const weekAgo = daysAgoIso(7);
+    const monthAgo = daysAgoIso(30);
+    const logsThisWeek = reports.filter((r) => r.createdDate >= weekAgo).length;
+    const logsThisMonth = reports.filter((r) => r.createdDate >= monthAgo).length;
+
+    const milestonesCompleted = dogMilestoneCompletions.filter((c) => c.completed).length;
+
+    const skillCounts = new Map<string, number>();
+    let skillsWorkedOnTotal = 0;
+    reports.forEach((r) => {
+      r.skillIds.forEach((id) => {
+        skillCounts.set(id, (skillCounts.get(id) ?? 0) + 1);
+        skillsWorkedOnTotal += 1;
+      });
+    });
+    const mostWorkedSkills: SkillWorkedCount[] = [...skillCounts.entries()]
+      .map(([checklistItemId, count]) => {
+        const item = checklistItems.find((i) => i.id === checklistItemId);
+        return item ? { checklistItemId, title: item.title, phase: item.phase, count } : null;
+      })
+      .filter((x): x is SkillWorkedCount => x !== null)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    const lastWorkedByDog = new Map<string, string>();
+    reports.forEach((r) => {
+      const existing = lastWorkedByDog.get(r.dogId);
+      if (!existing || r.createdDate > existing) lastWorkedByDog.set(r.dogId, r.createdDate);
+    });
+
+    const recentlyWorkedDogs: DogActivitySummary[] = [...lastWorkedByDog.entries()]
+      .map(([dogId, lastWorkedDate]) => {
+        const dog = dogs.find((d) => d.id === dogId);
+        return dog ? { dog, lastWorkedDate } : null;
+      })
+      .filter((x): x is { dog: Dog; lastWorkedDate: string } => x !== null)
+      .sort((a, b) => b.lastWorkedDate.localeCompare(a.lastWorkedDate))
+      .slice(0, 5);
+
+    const notWorkedCutoff = daysAgoIso(NOT_WORKED_RECENTLY_DAYS);
+    const dogsNotWorkedRecently: DogActivitySummary[] = dogs
+      .filter((d) => !d.released && !d.graduated)
+      .map((d) => ({ dog: d, lastWorkedDate: lastWorkedByDog.get(d.id) ?? null }))
+      .filter(({ lastWorkedDate }) => !lastWorkedDate || lastWorkedDate < notWorkedCutoff)
+      .sort((a, b) => (a.lastWorkedDate ?? '').localeCompare(b.lastWorkedDate ?? ''));
+
+    return {
+      totalDogs: dogs.length,
+      activeDogs,
+      graduatedDogs,
+      releasedDogs,
+      totalLogs: reports.length,
+      logsThisWeek,
+      logsThisMonth,
+      milestonesCompleted,
+      skillsWorkedOnTotal,
+      mostWorkedSkills,
+      recentlyWorkedDogs,
+      dogsNotWorkedRecently,
+    };
+  }, [state]);
 }

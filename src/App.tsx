@@ -24,6 +24,7 @@ import { Login } from './pages/Login';
 import { ManageTemplates } from './pages/ManageTemplates';
 import { NewReport } from './pages/NewReport';
 import { RedFlags } from './pages/RedFlags';
+import { TrainerHistory } from './pages/TrainerHistory';
 
 function App() {
   const [splashDone, setSplashDone] = useState(false);
@@ -181,7 +182,10 @@ function App() {
         </Link>
         <div className="flex items-center gap-4">
           <Link to="/templates" className="text-sm text-gray-500 hover:underline">
-            ⚙️ Skills &amp; Milestones
+            ⚙️ Training Options
+          </Link>
+          <Link to="/trainer-history" className="text-sm text-gray-500 hover:underline">
+            📊 Trainer History
           </Link>
           <Link to="/red-flags" className="text-sm text-red-500 hover:underline">
             🚩 Red Flags
@@ -226,6 +230,7 @@ function App() {
         <Route path="/dog/:dogId" element={<DogProfile />} />
         <Route path="/dog/:dogId/report/new" element={<NewReport />} />
         <Route path="/red-flags" element={<RedFlags />} />
+        <Route path="/trainer-history" element={<TrainerHistory />} />
         <Route path="/diagnostics" element={<Diagnostics />} />
         <Route path="/templates" element={<ManageTemplates />} />
         <Route path="/account" element={<AccountSettings />} />
