@@ -8,6 +8,7 @@ import {
   getImportableLegacyDatabase,
   hydrateFromServer,
   importLegacyDatabase,
+  migrateLegacyDefaultTemplates,
   resetLocalStore,
   seedDefaultTemplatesIfEmpty,
   useHydrated,
@@ -54,6 +55,7 @@ function App() {
         // login under StrictMode's double-invoke).
         if (cancelled) return;
         seedDefaultTemplatesIfEmpty();
+        migrateLegacyDefaultTemplates();
         setLegacyImport(getImportableLegacyDatabase());
       })
       .catch((err: unknown) => {

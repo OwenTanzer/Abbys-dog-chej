@@ -202,6 +202,88 @@ export function seedDefaultTemplatesIfEmpty(): void {
   syncToServer();
 }
 
+// The exact shape of the original AI-generated placeholder checklist/milestones
+// this app seeded new accounts with before #30 replaced them with Abby's real,
+// field-tested list. Used only to detect accounts that auto-seeded from those
+// placeholders and never touched them — any edit, addition, removal, or
+// reorder takes an account out of scope, so real personalization is never
+// overwritten by the migration below.
+const LEGACY_PLACEHOLDER_CHECKLIST: ReadonlyArray<{
+  title: string;
+  description: string;
+  requiredForGraduation: boolean;
+}> = [
+  { title: 'Accepts handling', description: '', requiredForGraduation: true },
+  { title: 'Basic leash comfort', description: '', requiredForGraduation: true },
+  { title: 'Begins crate comfort', description: '', requiredForGraduation: true },
+  { title: 'Calm behavior in low-distraction setting', description: '', requiredForGraduation: true },
+  { title: 'Demonstrates advanced reliability', description: '', requiredForGraduation: true },
+  { title: 'Demonstrates social stability', description: '', requiredForGraduation: true },
+  { title: 'Final trainer approval completed', description: '', requiredForGraduation: true },
+  { title: 'Follows basic commands', description: '', requiredForGraduation: true },
+  { title: 'Handles new environments', description: '', requiredForGraduation: true },
+  { title: 'Improved leash walking', description: '', requiredForGraduation: true },
+  { title: 'Maintains focus with mild distractions', description: '', requiredForGraduation: true },
+  { title: 'Maintains training across locations', description: '', requiredForGraduation: true },
+  { title: 'Meets graduation standards', description: '', requiredForGraduation: true },
+  { title: 'Performs commands with higher distractions', description: '', requiredForGraduation: true },
+  { title: 'Recovers quickly from stressors', description: '', requiredForGraduation: true },
+  { title: 'Responds reliably to trainer cues', description: '', requiredForGraduation: true },
+  { title: 'Responds to name', description: '', requiredForGraduation: true },
+  { title: 'Settles after excitement', description: '', requiredForGraduation: true },
+  { title: 'Shows consistent behavior around distractions', description: '', requiredForGraduation: true },
+  { title: 'Shows improved impulse control', description: '', requiredForGraduation: true },
+]
+  .slice()
+  .sort((a, b) => a.title.localeCompare(b.title));
+
+const LEGACY_PLACEHOLDER_MILESTONE_TITLES: ReadonlyArray<string> = [
+  'Completed Phase 1 evaluation',
+  'First calm interaction with another dog',
+  'First successful public outing',
+  'Passed leash-walking benchmark',
+  'Ready for graduation review',
+]
+  .slice()
+  .sort();
+
+function checklistMatchesLegacyPlaceholder(items: PhaseChecklistItem[]): boolean {
+  if (items.length !== LEGACY_PLACEHOLDER_CHECKLIST.length) return false;
+  const actual = items
+    .map((i) => ({ title: i.title, description: i.description, requiredForGraduation: i.requiredForGraduation }))
+    .sort((a, b) => a.title.localeCompare(b.title));
+  return actual.every(
+    (item, idx) =>
+      item.title === LEGACY_PLACEHOLDER_CHECKLIST[idx].title &&
+      item.description === LEGACY_PLACEHOLDER_CHECKLIST[idx].description &&
+      item.requiredForGraduation === LEGACY_PLACEHOLDER_CHECKLIST[idx].requiredForGraduation,
+  );
+}
+
+function milestonesMatchLegacyPlaceholder(items: MilestoneTemplate[]): boolean {
+  if (items.length !== LEGACY_PLACEHOLDER_MILESTONE_TITLES.length) return false;
+  const actual = items.map((i) => i.title).sort();
+  return actual.every((title, idx) => title === LEGACY_PLACEHOLDER_MILESTONE_TITLES[idx]);
+}
+
+// One-time migration for accounts that seeded (via seedDefaultTemplatesIfEmpty
+// above) before #30 replaced the AI-generated placeholder checklist/milestones
+// with Abby's real, field-tested ones. Only fires when the account's current
+// set is still byte-for-byte the untouched legacy placeholder set.
+export function migrateLegacyDefaultTemplates(): void {
+  if (db.checklistItems.length === 0 && db.milestoneTemplates.length === 0) return;
+  if (
+    !checklistMatchesLegacyPlaceholder(db.checklistItems) ||
+    !milestonesMatchLegacyPlaceholder(db.milestoneTemplates)
+  ) {
+    return;
+  }
+  const defaults = emptyDatabase();
+  db = { ...db, checklistItems: defaults.checklistItems, milestoneTemplates: defaults.milestoneTemplates };
+  notifyListeners();
+  syncToServer();
+}
+
 // If this device already ran the pre-backend version of the app, it has real
 // data sitting in the legacy single-browser key. Only surfaced when the
 // signed-in account's server blob is still empty — never offered against an
