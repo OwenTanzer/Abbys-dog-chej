@@ -577,9 +577,24 @@ export function deleteFolder(id: string): DeleteFolderResult {
     };
   }
   db.folders = db.folders.filter((f) => f.id !== id);
+  // A pinned folder that gets deleted must not leave Trainer History pointing
+  // at a dangling id.
+  if (db.pinnedFolderId === id) db.pinnedFolderId = null;
   notify();
   logEvent('Folder deleted', id);
   return { deleted: true };
+}
+
+// The one folder pinned to the top of Trainer History for quick access.
+export function usePinnedFolderId(): string | null {
+  return useDatabase().pinnedFolderId;
+}
+
+export function setPinnedFolder(folderId: string | null): boolean {
+  db.pinnedFolderId = folderId;
+  const persisted = notify();
+  logEvent('Pinned folder set', folderId ?? 'none');
+  return persisted;
 }
 
 // ---- Dogs ----

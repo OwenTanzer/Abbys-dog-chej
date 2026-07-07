@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Route, Routes } from 'react-router-dom';
 import { LoadingScreen } from './components/LoadingScreen';
-import { ThemeToggle } from './components/ThemeToggle';
 import { logout, refreshAccount, useSession } from './lib/auth';
 import {
   declineLegacyImport,
@@ -23,6 +22,7 @@ import { Login } from './pages/Login';
 import { ManageTemplates } from './pages/ManageTemplates';
 import { NewReport } from './pages/NewReport';
 import { RedFlags } from './pages/RedFlags';
+import { Settings } from './pages/Settings';
 import { TrainerHistory } from './pages/TrainerHistory';
 
 function App() {
@@ -187,19 +187,10 @@ function App() {
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
       <header className="border-b border-gray-200 dark:border-gray-700 p-4 flex items-center justify-between">
-        <Link to="/" className="font-semibold">
-          🐕 Tanzer Training Tracker
+        <Link to="/settings" title="Settings" className="text-xl">
+          ⚙️
         </Link>
         <div className="flex items-center gap-4">
-          <Link to="/folders" className="text-sm text-gray-500 hover:underline">
-            📂 My Folders
-          </Link>
-          <Link to="/templates" className="text-sm text-gray-500 hover:underline">
-            ⚙️ Training Options
-          </Link>
-          <Link to="/red-flags" className="text-sm text-red-500 hover:underline">
-            🚩 Red Flags
-          </Link>
           {syncStatus === 'error' && (
             <span title="Some changes may not be saved to the server yet" className="text-xs text-amber-500">
               ⚠️ Not synced
@@ -207,22 +198,29 @@ function App() {
           )}
           {syncStatus === 'syncing' && <span className="text-xs text-gray-400">Syncing…</span>}
           <Link
-            to="/account"
-            className="flex items-center gap-1.5 text-sm text-gray-500 hover:underline"
+            to="/"
+            title="Home"
+            className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:underline"
           >
             {session.profilePhotoUrl ? (
               <img
                 src={session.profilePhotoUrl}
                 alt=""
-                className="h-5 w-5 rounded-full object-cover"
+                className="h-7 w-7 rounded-full object-cover"
               />
-            ) : null}
+            ) : (
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800 text-sm">
+                🧑‍🏫
+              </span>
+            )}
             {session.name}
+          </Link>
+          <Link to="/folders" className="text-sm text-gray-500 hover:underline">
+            📂 Folders
           </Link>
           <button onClick={() => logout()} className="text-sm text-gray-500 hover:underline">
             Log out
           </button>
-          <ThemeToggle />
         </div>
       </header>
       <Routes>
@@ -235,6 +233,7 @@ function App() {
         <Route path="/dog/:dogId" element={<DogProfile />} />
         <Route path="/dog/:dogId/report/new" element={<NewReport />} />
         <Route path="/red-flags" element={<RedFlags />} />
+        <Route path="/settings" element={<Settings />} />
         <Route path="/diagnostics" element={<Diagnostics />} />
         <Route path="/templates" element={<ManageTemplates />} />
         <Route path="/account" element={<AccountSettings />} />

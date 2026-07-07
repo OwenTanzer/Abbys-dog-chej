@@ -30,6 +30,10 @@ export interface Database {
   // "different from Abby's defaults" and get silently overwritten on the next
   // login.
   templatesMigratedToAbbyDefaults: boolean;
+  // The one folder pinned to the top of Trainer History for quick access —
+  // null means nothing is pinned. Cleared automatically if that folder is
+  // deleted (see deleteFolder in store.ts).
+  pinnedFolderId: string | null;
 }
 
 const STORAGE_KEY = 'abbys-dog-chej:db:v1';
@@ -46,6 +50,7 @@ export function emptyDatabase(): Database {
     dogMilestoneCompletions: [],
     distractionTemplates: [],
     templatesMigratedToAbbyDefaults: true,
+    pinnedFolderId: null,
   };
 }
 
@@ -204,6 +209,8 @@ export function normalizeDatabase(parsed: Record<string, unknown>): Database {
     // absence as "not yet migrated" so migrateLegacyDefaultTemplates() runs
     // for them exactly once.
     database.templatesMigratedToAbbyDefaults = database.templatesMigratedToAbbyDefaults ?? false;
+    // Accounts predating the pinned-folder feature won't have this field at all.
+    database.pinnedFolderId = database.pinnedFolderId ?? null;
     return database;
   }
 
@@ -226,6 +233,7 @@ export function normalizeDatabase(parsed: Record<string, unknown>): Database {
     dogMilestoneCompletions: migrated.dogMilestoneCompletions,
     distractionTemplates: (parsed.distractionTemplates as DistractionTemplate[]) ?? [],
     templatesMigratedToAbbyDefaults: (parsed.templatesMigratedToAbbyDefaults as boolean | undefined) ?? false,
+    pinnedFolderId: (parsed.pinnedFolderId as string | null | undefined) ?? null,
   };
   return database;
 }

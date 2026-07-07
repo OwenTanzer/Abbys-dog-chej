@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useTrainerHistoryStats, type FinalOutcomeCounts, type SuccessRate } from '../data/store';
+import {
+  useDogsInFolder,
+  useFolder,
+  usePinnedFolderId,
+  useTrainerHistoryStats,
+  type FinalOutcomeCounts,
+  type SuccessRate,
+} from '../data/store';
 import { useSession } from '../lib/auth';
 
 function StatTile({
@@ -115,6 +122,9 @@ export function TrainerHistory() {
   const session = useSession();
   const [refinedRate, setRefinedRate] = useState(false);
   const [showGraduatedList, setShowGraduatedList] = useState(false);
+  const pinnedFolderId = usePinnedFolderId();
+  const pinnedFolder = useFolder(pinnedFolderId);
+  const pinnedDogs = useDogsInFolder(pinnedFolderId ?? '');
 
   if (!session) return null;
 
@@ -148,18 +158,70 @@ export function TrainerHistory() {
             </Link>
           </div>
         </div>
-        <Link
-          to="/folders"
-          className="shrink-0 rounded-md bg-sky-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-600"
-        >
-          📂 My Folders
-        </Link>
+        <div className="flex shrink-0 gap-2">
+          <Link
+            to="/red-flags"
+            className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
+          >
+            🚩 Red Flags
+          </Link>
+          <Link
+            to="/folders"
+            className="rounded-md bg-sky-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-600"
+          >
+            📂 My Folders
+          </Link>
+        </div>
       </div>
 
       <p className="text-sm text-gray-500">
         A look back at your training career — every dog you've handled on this account. Other
         instructors' data isn't included here.
       </p>
+
+      {pinnedFolderId && pinnedFolder && (
+        <section className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-medium uppercase tracking-wide text-gray-500">
+              📌 {pinnedFolder.name}
+            </h2>
+            <Link
+              to={`/folder/${pinnedFolder.id}`}
+              className="text-xs text-sky-500 hover:underline"
+            >
+              Open folder
+            </Link>
+          </div>
+          {pinnedDogs.length === 0 ? (
+            <p className="text-sm text-gray-400">No dogs in this folder yet.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {pinnedDogs.map((dog) => (
+                <Link
+                  key={dog.id}
+                  to={`/dog/${dog.id}`}
+                  className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-gray-700 p-2 hover:border-sky-400"
+                >
+                  <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-lg">
+                    {dog.profilePhoto ? (
+                      <img
+                        src={dog.profilePhoto}
+                        alt={dog.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      '🐕'
+                    )}
+                  </div>
+                  <span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                    {dog.name}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium uppercase tracking-wide text-gray-500">Your Dogs</h2>
