@@ -70,7 +70,7 @@ export function FolderView() {
       alert(result.reason);
       return;
     }
-    navigate(folder.parentFolderId ? `/folder/${folder.parentFolderId}` : '/');
+    navigate(folder.parentFolderId ? `/folder/${folder.parentFolderId}` : '/folders');
   }
 
   return (

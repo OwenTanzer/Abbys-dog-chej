@@ -123,33 +123,37 @@ export function TrainerHistory() {
 
   return (
     <div className="max-w-3xl mx-auto p-4 space-y-6">
-      <Link to="/" className="text-sm text-sky-500 hover:underline">
-        ← Back to Home
-      </Link>
-
-      <div className="flex items-center gap-4">
-        <div className="h-20 w-20 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-4xl">
-          {session.profilePhotoUrl ? (
-            <img
-              src={session.profilePhotoUrl}
-              alt={session.name}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            '🧑‍🏫'
-          )}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="h-20 w-20 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-4xl">
+            {session.profilePhotoUrl ? (
+              <img
+                src={session.profilePhotoUrl}
+                alt={session.name}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              '🧑‍🏫'
+            )}
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
+              {session.name}
+            </h1>
+            {trainerSince && (
+              <p className="text-sm text-gray-500">Trainer since {trainerSince}</p>
+            )}
+            <Link to="/account" className="text-xs text-sky-500 hover:underline">
+              Edit profile
+            </Link>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
-            {session.name}
-          </h1>
-          {trainerSince && (
-            <p className="text-sm text-gray-500">Trainer since {trainerSince}</p>
-          )}
-          <Link to="/account" className="text-xs text-sky-500 hover:underline">
-            Edit profile
-          </Link>
-        </div>
+        <Link
+          to="/folders"
+          className="shrink-0 rounded-md bg-sky-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-600"
+        >
+          📂 My Folders
+        </Link>
       </div>
 
       <p className="text-sm text-gray-500">

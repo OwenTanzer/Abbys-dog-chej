@@ -308,7 +308,7 @@ export function DogProfile() {
     if (!dog) return;
     if (!confirm(`Delete ${dog.name}'s profile? This cannot be undone.`)) return;
     deleteDog(dog.id);
-    navigate(folder ? `/folder/${folder.id}` : '/');
+    navigate(folder ? `/folder/${folder.id}` : '/folders');
   }
 
   function handleRenameSelfSubmit(e: React.FormEvent) {
@@ -387,10 +387,10 @@ export function DogProfile() {
   return (
     <div className="max-w-3xl mx-auto p-4 space-y-6">
       <Link
-        to={folder ? `/folder/${folder.id}` : '/'}
+        to={folder ? `/folder/${folder.id}` : '/folders'}
         className="text-sm text-sky-500 hover:underline"
       >
-        ← Back to {folder ? folder.name : 'Home'}
+        ← Back to {folder ? folder.name : 'My Folders'}
       </Link>
 
       <div className="flex items-start gap-4">

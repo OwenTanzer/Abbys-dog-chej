@@ -193,11 +193,11 @@ function App() {
           🐕 Tanzer Training Tracker
         </Link>
         <div className="flex items-center gap-4">
+          <Link to="/folders" className="text-sm text-gray-500 hover:underline">
+            📂 My Folders
+          </Link>
           <Link to="/templates" className="text-sm text-gray-500 hover:underline">
             ⚙️ Training Options
-          </Link>
-          <Link to="/trainer-history" className="text-sm text-gray-500 hover:underline">
-            📊 Trainer History
           </Link>
           <Link to="/red-flags" className="text-sm text-red-500 hover:underline">
             🚩 Red Flags
@@ -237,12 +237,15 @@ function App() {
         </div>
       </header>
       <Routes>
-        <Route path="/" element={<FolderView />} />
+        <Route path="/" element={<TrainerHistory />} />
+        {/* /trainer-history kept as an alias of the new home route, in case
+            anything external still links to it. */}
+        <Route path="/trainer-history" element={<TrainerHistory />} />
+        <Route path="/folders" element={<FolderView />} />
         <Route path="/folder/:folderId" element={<FolderView />} />
         <Route path="/dog/:dogId" element={<DogProfile />} />
         <Route path="/dog/:dogId/report/new" element={<NewReport />} />
         <Route path="/red-flags" element={<RedFlags />} />
-        <Route path="/trainer-history" element={<TrainerHistory />} />
         <Route path="/diagnostics" element={<Diagnostics />} />
         <Route path="/templates" element={<ManageTemplates />} />
         <Route path="/account" element={<AccountSettings />} />
