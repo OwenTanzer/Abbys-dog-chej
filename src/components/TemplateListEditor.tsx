@@ -1,8 +1,64 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { ReorderableList, type RowGesture } from './ReorderableList';
 
 export interface TemplateListItem {
   id: string;
   title: string;
+}
+
+// A dedicated grab handle rather than the whole row: template rows already
+// have visible, always-on rename/delete buttons (no swipe-to-reveal like
+// FolderCard/DogCard), so there's no "tap vs. long-press vs. swipe"
+// ambiguity to resolve — the handle can start a drag on the very first
+// pointerdown. Mirrors SwipeRow's stable-callback trampoline so add/remove
+// event listener always target the same function reference even though this
+// component re-renders (via ReorderableList's drag state) mid-gesture.
+function DragHandle({ gesture }: { gesture: RowGesture }) {
+  const activePointerId = useRef<number | null>(null);
+
+  function handlePointerMove(e: PointerEvent) {
+    if (e.pointerId !== activePointerId.current) return;
+    e.preventDefault();
+    gesture.updateDrag(e.clientX, e.clientY);
+  }
+
+  function handlePointerUp(e: PointerEvent) {
+    if (e.pointerId !== activePointerId.current) return;
+    gesture.endDrag();
+    window.removeEventListener('pointermove', stableMove);
+    window.removeEventListener('pointerup', stableUp);
+    window.removeEventListener('pointercancel', stableUp);
+    activePointerId.current = null;
+  }
+
+  const implRef = useRef({ move: handlePointerMove, up: handlePointerUp });
+  implRef.current.move = handlePointerMove;
+  implRef.current.up = handlePointerUp;
+  const stableMove = useRef((e: PointerEvent) => implRef.current.move(e)).current;
+  const stableUp = useRef((e: PointerEvent) => implRef.current.up(e)).current;
+
+  function handlePointerDown(e: React.PointerEvent) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    activePointerId.current = e.pointerId;
+    gesture.startDrag(e.clientX, e.clientY);
+    window.addEventListener('pointermove', stableMove, { passive: false });
+    window.addEventListener('pointerup', stableUp);
+    window.addEventListener('pointercancel', stableUp);
+  }
+
+  return (
+    <button
+      type="button"
+      onPointerDown={handlePointerDown}
+      onDragStart={(e) => e.preventDefault()}
+      onContextMenu={(e) => e.preventDefault()}
+      title="Drag to reorder"
+      className="cursor-grab select-none rounded px-1 py-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 active:cursor-grabbing dark:hover:bg-gray-800"
+      style={{ touchAction: 'none' }}
+    >
+      ⠿
+    </button>
+  );
 }
 
 export function TemplateListEditor({
@@ -12,7 +68,7 @@ export function TemplateListEditor({
   onAdd,
   onRename,
   onDelete,
-  onMove,
+  onReorder,
 }: {
   label: string;
   addPlaceholder: string;
@@ -20,7 +76,7 @@ export function TemplateListEditor({
   onAdd: (title: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
-  onMove: (id: string, direction: 'up' | 'down') => void;
+  onReorder: (orderedIds: string[]) => void;
 }) {
   const [newTitle, setNewTitle] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -48,30 +104,21 @@ export function TemplateListEditor({
   return (
     <section className="space-y-2">
       <h2 className="text-sm font-medium uppercase tracking-wide text-gray-500">{label}</h2>
-      <ul className="space-y-1">
-        {items.map((item, index) => (
-          <li
-            key={item.id}
-            className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 p-2"
+      <ReorderableList
+        items={items}
+        getId={(item) => item.id}
+        onReorder={onReorder}
+        className="flex flex-col gap-1"
+        renderItem={(item, gesture, isDragging, dragOffset) => (
+          <div
+            className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-2"
+            style={
+              isDragging
+                ? { transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)`, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }
+                : undefined
+            }
           >
-            <div className="flex flex-col">
-              <button
-                title="Move up"
-                disabled={index === 0}
-                onClick={() => onMove(item.id, 'up')}
-                className="px-1 text-xs text-gray-500 hover:text-sky-500 disabled:opacity-20"
-              >
-                ▲
-              </button>
-              <button
-                title="Move down"
-                disabled={index === items.length - 1}
-                onClick={() => onMove(item.id, 'down')}
-                className="px-1 text-xs text-gray-500 hover:text-sky-500 disabled:opacity-20"
-              >
-                ▼
-              </button>
-            </div>
+            <DragHandle gesture={gesture} />
             {editingId === item.id ? (
               <form
                 onSubmit={(e) => {
@@ -111,12 +158,12 @@ export function TemplateListEditor({
             >
               🗑️
             </button>
-          </li>
-        ))}
-        {items.length === 0 && (
-          <p className="text-sm text-gray-400">Nothing here yet for this phase.</p>
+          </div>
         )}
-      </ul>
+      />
+      {items.length === 0 && (
+        <p className="text-sm text-gray-400">Nothing here yet for this phase.</p>
+      )}
       <form onSubmit={handleAdd} className="flex gap-2">
         <input
           value={newTitle}

@@ -8,10 +8,13 @@ import { uploadPhoto } from '../lib/api';
 import {
   deleteDog,
   deleteReport,
+  markDogGraduated,
   moveDog,
   reactivateDog,
   releaseDog,
+  removeDogGraduatedStatus,
   toggleChecklistCompletion,
+  toggleChecklistItemFlag,
   toggleDogMilestoneCompletion,
   toggleReportRedFlag,
   updateDog,
@@ -20,6 +23,7 @@ import {
   useDog,
   useDogCompletions,
   useDogMilestoneCompletions,
+  useDogWorkedToday,
   useFolder,
   useLocations,
   useMilestoneTemplates,
@@ -68,7 +72,7 @@ function EditReportForm({
     });
     if (!persisted) {
       setError(
-        "This report didn't save — your browser's storage is likely full. Try removing an old photo or report, then save again.",
+        "This log didn't save — your browser's storage is likely full. Try removing an old photo or log, then save again.",
       );
       return;
     }
@@ -79,7 +83,7 @@ function EditReportForm({
     <form onSubmit={handleSubmit} className="space-y-2 text-sm">
       <p className="rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2 py-1 text-gray-600 dark:text-gray-400">
         {report.phase}{' '}
-        <span className="text-xs text-gray-400">— phase is locked to the report's original phase</span>
+        <span className="text-xs text-gray-400">— phase is locked to the log's original phase</span>
       </p>
       <div className="space-y-1">
         {skillsForPhase.map((item) => (
@@ -95,7 +99,7 @@ function EditReportForm({
       </div>
       <label className="flex items-center gap-2">
         <input type="checkbox" checked={redFlag} onChange={(e) => setRedFlag(e.target.checked)} />
-        🚩 Red flag this report
+        🚩 Red flag this log
       </label>
       <select
         value={locationId}
@@ -146,8 +150,10 @@ export function DogProfile() {
   const milestones = useMilestoneTemplates(dog?.currentPhase);
   const milestoneCompletions = useDogMilestoneCompletions(dogId ?? '');
   const allReports = useReportsForDog(dogId ?? '');
+  const workedToday = useDogWorkedToday(dogId ?? '');
   const locations = useLocations();
 
+  const [hideCompletedSkills, setHideCompletedSkills] = useState(false);
   const [phaseFilter, setPhaseFilter] = useState<Phase | 'all'>('all');
   const [redFlagOnly, setRedFlagOnly] = useState(false);
   const [search, setSearch] = useState('');
@@ -168,6 +174,17 @@ export function DogProfile() {
     });
   }, [allReports, phaseFilter, redFlagOnly, search]);
 
+  const visibleChecklist = useMemo(() => {
+    if (!hideCompletedSkills) return checklist;
+    return checklist.filter((item) => {
+      const completion = completions.find((c) => c.checklistItemId === item.id);
+      // A flagged skill means "needs attention" — that outranks "hide
+      // completed", so a flagged-and-completed skill stays visible.
+      if (completion?.flagged) return true;
+      return !completion?.completed;
+    });
+  }, [checklist, completions, hideCompletedSkills]);
+
   if (!dog) {
     return <p className="p-4 text-gray-500">Dog not found.</p>;
   }
@@ -187,7 +204,7 @@ export function DogProfile() {
     const persisted = updateDog(dog.id, { profilePhoto: url });
     if (!persisted) {
       setPhotoError(
-        "Photo didn't save — your browser's storage is likely full. Try removing an old photo or report.",
+        "Photo didn't save — your browser's storage is likely full. Try removing an old photo or log.",
       );
     }
   }
@@ -213,6 +230,10 @@ export function DogProfile() {
 
   function handleRelease() {
     if (!dog) return;
+    if (dog.graduated) {
+      alert(`Remove ${dog.name}'s Graduated status before releasing them from training.`);
+      return;
+    }
     if (!confirm(`Mark ${dog.name} as released from training? Their record is kept, just marked inactive.`)) {
       return;
     }
@@ -225,8 +246,32 @@ export function DogProfile() {
     reactivateDog(dog.id);
   }
 
+  function handleMarkGraduated() {
+    if (!dog) return;
+    if (dog.released) {
+      alert(`Reactivate ${dog.name} before marking them Graduated.`);
+      return;
+    }
+    if (
+      !confirm(
+        `Mark ${dog.name} as Graduated? This checks off every current skill and milestone and freezes their progress at 100%, even if the shared skill/milestone list changes later.`,
+      )
+    ) {
+      return;
+    }
+    markDogGraduated(dog.id);
+  }
+
+  function handleRemoveGraduatedStatus() {
+    if (!dog) return;
+    if (!confirm(`Remove ${dog.name}'s Graduated status? Their progress will recalculate live again.`)) {
+      return;
+    }
+    removeDogGraduatedStatus(dog.id);
+  }
+
   function handleDeleteReport(id: string) {
-    if (!confirm('Delete this training report? This cannot be undone.')) return;
+    if (!confirm('Delete this training log? This cannot be undone.')) return;
     deleteReport(id);
   }
 
@@ -278,6 +323,14 @@ export function DogProfile() {
               >
                 <PencilIcon />
               </button>
+              {workedToday && (
+                <span
+                  title="A training log was added for this dog today"
+                  className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+                >
+                  Worked today
+                </span>
+              )}
             </div>
           )}
           <div className="flex items-center gap-2 text-sm">
@@ -306,6 +359,11 @@ export function DogProfile() {
               Released on {new Date(dog.releasedDate).toLocaleDateString()}
             </p>
           )}
+          {dog.graduated && dog.graduatedDate && (
+            <p className="text-xs text-emerald-600 dark:text-emerald-400">
+              🎓 Graduated on {new Date(dog.graduatedDate).toLocaleDateString()} — progress is frozen
+            </p>
+          )}
           {photoError && <p className="text-xs text-red-500">{photoError}</p>}
         </div>
       </div>
@@ -322,7 +380,7 @@ export function DogProfile() {
           to={`/dog/${dog.id}/report/new`}
           className="rounded-md bg-sky-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-600"
         >
-          + New Training Report
+          + New Training Log
         </Link>
         <button
           onClick={() => setMoving(true)}
@@ -340,9 +398,32 @@ export function DogProfile() {
         ) : (
           <button
             onClick={handleRelease}
-            className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
+            disabled={dog.graduated}
+            title={dog.graduated ? "Remove this dog's Graduated status first" : undefined}
+            className={`rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-950 ${
+              dog.graduated ? 'opacity-40 cursor-not-allowed hover:bg-transparent dark:hover:bg-transparent' : ''
+            }`}
           >
             Release from Training
+          </button>
+        )}
+        {dog.graduated ? (
+          <button
+            onClick={handleRemoveGraduatedStatus}
+            className="rounded-md border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800"
+          >
+            Remove Graduated Status
+          </button>
+        ) : (
+          <button
+            onClick={handleMarkGraduated}
+            disabled={dog.released}
+            title={dog.released ? 'Reactivate this dog first' : undefined}
+            className={`rounded-md border border-emerald-300 px-3 py-1.5 text-sm font-medium text-emerald-600 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950 ${
+              dog.released ? 'opacity-40 cursor-not-allowed hover:bg-transparent dark:hover:bg-transparent' : ''
+            }`}
+          >
+            🎓 Mark Graduated
           </button>
         )}
         <button
@@ -369,15 +450,25 @@ export function DogProfile() {
       </p>
 
       <section className="space-y-2">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-gray-500">
-          {dog.currentPhase} Skills
-        </h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-gray-500">
+            {dog.currentPhase} Skills
+          </h2>
+          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+            <input
+              type="checkbox"
+              checked={hideCompletedSkills}
+              onChange={(e) => setHideCompletedSkills(e.target.checked)}
+            />
+            Hide completed skills
+          </label>
+        </div>
         <ul className="space-y-1">
-          {checklist.map((item) => {
+          {visibleChecklist.map((item) => {
             const completion = completions.find((c) => c.checklistItemId === item.id);
             return (
-              <li key={item.id}>
-                <label className="flex items-center gap-2 text-sm">
+              <li key={item.id} className="flex items-center gap-1">
+                <label className="flex flex-1 items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     checked={completion?.completed ?? false}
@@ -396,6 +487,18 @@ export function DogProfile() {
                     <span className="text-xs text-sky-500">● In progress</span>
                   )}
                 </label>
+                <button
+                  onClick={() => toggleChecklistItemFlag(dog.id, item.id)}
+                  aria-pressed={completion?.flagged ?? false}
+                  title={completion?.flagged ? 'Unflag this skill' : 'Flag this skill'}
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs transition-all duration-150 active:scale-90 ${
+                    completion?.flagged
+                      ? 'bg-red-100 ring-1 ring-red-400 dark:bg-red-950'
+                      : 'bg-gray-100 opacity-40 grayscale hover:opacity-70 dark:bg-gray-800'
+                  }`}
+                >
+                  🚩
+                </button>
               </li>
             );
           })}
@@ -407,6 +510,9 @@ export function DogProfile() {
               </Link>
               .
             </p>
+          )}
+          {checklist.length > 0 && visibleChecklist.length === 0 && (
+            <p className="text-sm text-gray-400">All skills in this phase are complete.</p>
           )}
         </ul>
       </section>
@@ -453,7 +559,7 @@ export function DogProfile() {
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium uppercase tracking-wide text-gray-500">
-          Report History
+          Log History
         </h2>
         <div className="flex flex-wrap gap-2 text-sm">
           <select
@@ -526,14 +632,14 @@ export function DogProfile() {
                     <button
                       onClick={() => setEditingReportId(r.id)}
                       className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-                      title="Edit report"
+                      title="Edit log"
                     >
                       <PencilIcon />
                     </button>
                     <button
                       onClick={() => handleDeleteReport(r.id)}
                       className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950"
-                      title="Delete report"
+                      title="Delete log"
                     >
                       <TrashIcon />
                     </button>
@@ -545,7 +651,7 @@ export function DogProfile() {
                 {r.picture && (
                   <img
                     src={r.picture}
-                    alt="Training report attachment"
+                    alt="Training log attachment"
                     className="h-24 w-24 rounded-md object-cover"
                   />
                 )}
@@ -563,7 +669,7 @@ export function DogProfile() {
             );
           })}
           {reports.length === 0 && (
-            <p className="text-sm text-gray-400">No training reports match these filters.</p>
+            <p className="text-sm text-gray-400">No training logs match these filters.</p>
           )}
         </ul>
       </section>

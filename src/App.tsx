@@ -139,7 +139,7 @@ function App() {
           From before accounts existed: {legacyImport.folders.length} folder
           {legacyImport.folders.length === 1 ? '' : 's'}, {legacyImport.dogs.length} dog
           {legacyImport.dogs.length === 1 ? '' : 's'}, and {legacyImport.reports.length} training
-          report{legacyImport.reports.length === 1 ? '' : 's'}. Import it into your account so it's
+          log{legacyImport.reports.length === 1 ? '' : 's'}. Import it into your account so it's
           saved to the server and available on your other devices?
         </p>
         {importError && <p className="text-sm text-red-500">{importError}</p>}
