@@ -15,6 +15,7 @@ import {
   useSyncStatus,
 } from './data/store';
 import type { Database } from './data/db';
+import { AccountSettings } from './pages/AccountSettings';
 import { Diagnostics } from './pages/Diagnostics';
 import { DogProfile } from './pages/DogProfile';
 import { FolderView } from './pages/FolderView';
@@ -198,7 +199,19 @@ function App() {
             </span>
           )}
           {syncStatus === 'syncing' && <span className="text-xs text-gray-400">Syncing…</span>}
-          <span className="text-sm text-gray-500">{session.name}</span>
+          <Link
+            to="/account"
+            className="flex items-center gap-1.5 text-sm text-gray-500 hover:underline"
+          >
+            {session.profilePhotoUrl ? (
+              <img
+                src={session.profilePhotoUrl}
+                alt=""
+                className="h-5 w-5 rounded-full object-cover"
+              />
+            ) : null}
+            {session.name}
+          </Link>
           <button onClick={() => logout()} className="text-sm text-gray-500 hover:underline">
             Log out
           </button>
@@ -213,6 +226,7 @@ function App() {
         <Route path="/red-flags" element={<RedFlags />} />
         <Route path="/diagnostics" element={<Diagnostics />} />
         <Route path="/templates" element={<ManageTemplates />} />
+        <Route path="/account" element={<AccountSettings />} />
       </Routes>
     </div>
   );
