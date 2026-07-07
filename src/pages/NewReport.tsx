@@ -89,7 +89,7 @@ export function NewReport() {
       });
       if (!persisted) {
         setSubmitError(
-          "This report didn't save — your browser's storage is likely full. Try removing an old photo or report, then save again.",
+          "This log didn't save — your browser's storage is likely full. Try removing an old photo or log, then save again.",
         );
         return;
       }
@@ -109,7 +109,7 @@ export function NewReport() {
         ← Back to {dog.name}
       </Link>
       <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
-        New Training Report for {dog.name}
+        New Training Log for {dog.name}
       </h1>
 
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -152,7 +152,7 @@ export function NewReport() {
             checked={redFlag}
             onChange={(e) => setRedFlag(e.target.checked)}
           />
-          🚩 Red flag this report
+          🚩 Red flag this log
         </label>
 
         <div>
@@ -215,7 +215,7 @@ export function NewReport() {
           disabled={saving}
           className="rounded-md bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
         >
-          {saving ? 'Saving…' : 'Save Report'}
+          {saving ? 'Saving…' : 'Save Log'}
         </button>
       </form>
     </div>

@@ -85,7 +85,7 @@ export function Diagnostics() {
           <p className="text-sm text-gray-600 dark:text-gray-300">
             This device has {legacy.folders.length} folder{legacy.folders.length === 1 ? '' : 's'},{' '}
             {legacy.dogs.length} dog{legacy.dogs.length === 1 ? '' : 's'}, and {legacy.reports.length}{' '}
-            training report{legacy.reports.length === 1 ? '' : 's'} saved locally from before your
+            training log{legacy.reports.length === 1 ? '' : 's'} saved locally from before your
             account existed. Import it into your account so it's backed up and available on your
             other devices.
           </p>
@@ -126,7 +126,7 @@ export function Diagnostics() {
           Data
         </h2>
         <p>
-          Folders: {counts.folders} · Dogs: {counts.dogs} · Reports: {counts.reports} ·
+          Folders: {counts.folders} · Dogs: {counts.dogs} · Logs: {counts.reports} ·
           Locations: {counts.locations}
         </p>
         <p>

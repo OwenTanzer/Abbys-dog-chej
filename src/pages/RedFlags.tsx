@@ -27,7 +27,7 @@ function RedFlaggedReport({ reportId }: { reportId: string }) {
         {location ? ` · 📍 ${location.name}` : ''}
       </p>
       {report.picture && (
-        <img src={report.picture} alt="Report attachment" className="h-24 w-24 rounded-md object-cover" />
+        <img src={report.picture} alt="Log attachment" className="h-24 w-24 rounded-md object-cover" />
       )}
       <p className="text-sm text-gray-700 dark:text-gray-300">{report.notes}</p>
     </li>
@@ -43,10 +43,10 @@ export function RedFlags() {
         ← Back to Home
       </Link>
       <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
-        🚩 Red-Flagged Reports
+        🚩 Red-Flagged Logs
       </h1>
       {reports.length === 0 && (
-        <p className="text-sm text-gray-400">No red-flagged reports yet.</p>
+        <p className="text-sm text-gray-400">No red-flagged logs yet.</p>
       )}
       <ul className="space-y-2">
         {reports.map((r) => (
