@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Dog } from '../types';
 import { ProgressBar } from './ProgressBar';
-import { deleteDog, moveDog, updateDog } from '../data/store';
+import { deleteDog, moveDog, updateDog, useDogWorkedToday } from '../data/store';
 import { MoveDialog } from './MoveDialog';
 import { MoveIcon, PencilIcon, TrashIcon } from './icons';
 import { SwipeRow } from './SwipeRow';
@@ -22,6 +22,7 @@ export function DogCard({
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(dog.name);
   const [moving, setMoving] = useState(false);
+  const workedToday = useDogWorkedToday(dog.id);
 
   function handleRenameSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -99,7 +100,13 @@ export function DogCard({
           </>
         }
       >
-        <div className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 p-2 hover:border-sky-400 hover:shadow-sm transition">
+        <div
+          className={`flex items-center gap-1 rounded-lg border p-2 transition hover:border-sky-400 hover:shadow-sm ${
+            workedToday
+              ? 'border-gray-300 bg-gray-50 dark:border-gray-600 dark:bg-gray-800/60'
+              : 'border-gray-200 dark:border-gray-700'
+          }`}
+        >
           <Link to={`/dog/${dog.id}`} className="flex flex-1 items-center gap-3 min-w-0 px-1 py-1">
             <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-2xl">
               {dog.profilePhoto ? (
@@ -119,12 +126,19 @@ export function DogCard({
                 </p>
                 <span className="text-xs text-gray-500 shrink-0">{dog.currentPhase}</span>
               </div>
-              <ProgressBar
-                progress={dog.graduationProgress}
-                status={dog.graduationStatus}
-                released={dog.released}
-                compact
-              />
+              <div className="flex items-center gap-2">
+                <ProgressBar
+                  progress={dog.graduationProgress}
+                  status={dog.graduationStatus}
+                  released={dog.released}
+                  compact
+                />
+                {workedToday && (
+                  <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+                    Worked today
+                  </span>
+                )}
+              </div>
             </div>
           </Link>
         </div>

@@ -28,6 +28,13 @@ export interface Dog {
   graduationStatus: GraduationStatus;
   released: boolean;
   releasedDate: string | null;
+  // Distinct from a live graduationStatus of 'Graduated' reached by simply
+  // completing everything that currently exists — this is the explicit,
+  // deliberate "Mark Graduated" action (#31), and it freezes graduationProgress/
+  // graduationStatus so later edits to the shared skill/milestone templates
+  // never retroactively change what a graduated dog displays.
+  graduated: boolean;
+  graduatedDate: string | null;
   createdDate: string;
   updatedDate: string;
 }
@@ -71,6 +78,7 @@ export interface DogChecklistCompletion {
   inProgress: boolean;
   dateCompleted: string | null;
   notes: string | null;
+  flagged: boolean;
 }
 
 export interface MilestoneTemplate {

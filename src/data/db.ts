@@ -119,14 +119,17 @@ function backfillSortOrder<T extends { sortOrder?: number }>(
   });
 }
 
-// Dogs predating the "released" status (#13) won't have these fields in their
-// stored JSON at all, so they'd otherwise come back as undefined.
+// Dogs predating the "released" status (#13) or "graduated" lock (#31) won't
+// have these fields in their stored JSON at all, so they'd otherwise come
+// back as undefined.
 function backfillDogs(dogs: Dog[]): Dog[] {
   return backfillSortOrder(
     dogs.map((dog) => ({
       ...dog,
       released: dog.released ?? false,
       releasedDate: dog.releasedDate ?? null,
+      graduated: dog.graduated ?? false,
+      graduatedDate: dog.graduatedDate ?? null,
     })),
     (dog) => dog.folderId,
   );
@@ -144,11 +147,13 @@ function backfillReports(reports: TrainingReport[]): TrainingReport[] {
   }));
 }
 
-// Completions predating the "in progress" status (#18) won't have inProgress stored.
+// Completions predating the "in progress" status (#18) won't have inProgress
+// stored, and completions predating per-skill flags (#44) won't have flagged.
 function backfillCompletions(completions: DogChecklistCompletion[]): DogChecklistCompletion[] {
   return completions.map((completion) => ({
     ...completion,
     inProgress: completion.inProgress ?? false,
+    flagged: completion.flagged ?? false,
   }));
 }
 

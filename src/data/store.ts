@@ -65,7 +65,7 @@ function notify(): boolean {
     if (!persistedLocally) {
       logError(
         'Local cache save failed',
-        'Browser storage is likely full. Try removing an old photo or report, then save again.',
+        'Browser storage is likely full. Try removing an old photo or log, then save again.',
       );
     }
   }
@@ -454,6 +454,11 @@ export function computeGraduationProgress(dogId: string): number {
 function refreshDogProgress(dogId: string) {
   const dog = db.dogs.find((d) => d.id === dogId);
   if (!dog) return;
+  // A graduated dog's displayed progress is frozen (#31) — later edits to the
+  // shared checklist/milestone templates change the denominator this would
+  // otherwise recompute against, which would retroactively make an already-
+  // graduated dog look incomplete.
+  if (dog.graduated) return;
   const progress = computeGraduationProgress(dogId);
   dog.graduationProgress = progress;
   dog.graduationStatus = statusForProgress(progress);
@@ -462,6 +467,7 @@ function refreshDogProgress(dogId: string) {
 
 function refreshAllDogsProgress() {
   db.dogs.forEach((dog) => {
+    if (dog.graduated) return;
     const progress = computeGraduationProgress(dog.id);
     dog.graduationProgress = progress;
     dog.graduationStatus = statusForProgress(progress);
@@ -600,6 +606,8 @@ export function createDog(
     graduationStatus: 'Not Started',
     released: false,
     releasedDate: null,
+    graduated: false,
+    graduatedDate: null,
     createdDate: now(),
     updatedDate: now(),
   };
@@ -647,6 +655,87 @@ export function reactivateDog(id: string): boolean {
   return persisted;
 }
 
+// Checks off every current checklist item and milestone for this dog, then
+// freezes graduationProgress/graduationStatus at 100%/Graduated (enforced by
+// the `dog.graduated` guard in refreshDogProgress/refreshAllDogsProgress), so
+// adding a new skill/milestone template later never makes an already-
+// graduated dog look incomplete again.
+export function markDogGraduated(id: string): boolean {
+  const dog = db.dogs.find((d) => d.id === id);
+  if (!dog) return false;
+  const completedAt = now();
+
+  db.checklistItems.forEach((item) => {
+    let completion = db.completions.find(
+      (c) => c.dogId === id && c.checklistItemId === item.id,
+    );
+    if (!completion) {
+      completion = {
+        id: uid(),
+        dogId: id,
+        checklistItemId: item.id,
+        completed: true,
+        inProgress: false,
+        dateCompleted: completedAt,
+        notes: null,
+        flagged: false,
+      };
+      db.completions.push(completion);
+    } else {
+      completion.completed = true;
+      completion.inProgress = false;
+      completion.dateCompleted = completedAt;
+    }
+  });
+
+  db.milestoneTemplates.forEach((template) => {
+    let completion = db.dogMilestoneCompletions.find(
+      (c) => c.dogId === id && c.milestoneTemplateId === template.id,
+    );
+    if (!completion) {
+      completion = {
+        id: uid(),
+        dogId: id,
+        milestoneTemplateId: template.id,
+        completed: true,
+        dateCompleted: completedAt,
+        notes: null,
+        photo: null,
+      };
+      db.dogMilestoneCompletions.push(completion);
+    } else {
+      completion.completed = true;
+      completion.dateCompleted = completedAt;
+    }
+  });
+
+  dog.graduated = true;
+  dog.graduatedDate = completedAt;
+  dog.graduationStatus = 'Graduated';
+  dog.graduationProgress = 100;
+  dog.updatedDate = completedAt;
+  const persisted = notify();
+  logEvent('Dog graduated', id);
+  return persisted;
+}
+
+// Cheap undo: only lifts the freeze and lets progress recompute live from
+// whatever's actually completed — it deliberately does not uncheck anything
+// markDogGraduated checked off, since "remove graduated status" and "undo
+// every checkbox" are different asks and the latter is easy to do by hand
+// from the checklist if that's really what's wanted.
+export function removeDogGraduatedStatus(id: string): boolean {
+  const dog = db.dogs.find((d) => d.id === id);
+  if (!dog) return false;
+  dog.graduated = false;
+  dog.graduatedDate = null;
+  dog.updatedDate = now();
+  refreshDogProgress(id);
+  const persisted = notify();
+  logEvent('Dog graduated status removed', id);
+  return persisted;
+}
+
 export function moveDog(id: string, newFolderId: string): boolean {
   const siblingCount = db.dogs.filter(
     (d) => d.folderId === newFolderId && d.id !== id,
@@ -671,6 +760,25 @@ export function useReportsForDog(dogId: string): TrainingReport[] {
   return useDatabase()
     .reports.filter((r) => r.dogId === dogId)
     .sort((a, b) => b.createdDate.localeCompare(a.createdDate));
+}
+
+function isLocalToday(dateIso: string): boolean {
+  const d = new Date(dateIso);
+  const today = new Date();
+  return (
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate()
+  );
+}
+
+// Worked-today (#47) is deliberately derived-only from the log itself, rather
+// than a stored flag — the log's createdDate is already the source of truth
+// for "was this dog worked with today," and a derived value can't drift out
+// of sync the way a manually-set/reset flag could. It also naturally resets
+// at local midnight with no cleanup job needed.
+export function useDogWorkedToday(dogId: string): boolean {
+  return useDatabase().reports.some((r) => r.dogId === dogId && isLocalToday(r.createdDate));
 }
 
 export function useRedFlaggedReports(): TrainingReport[] {
@@ -703,6 +811,7 @@ function markSkillsInProgress(dogId: string, skillIds: string[]) {
         inProgress: true,
         dateCompleted: null,
         notes: null,
+        flagged: false,
       };
       db.completions.push(completion);
     } else if (!completion.completed) {
@@ -744,7 +853,7 @@ export function createReport(
   markSkillsInProgress(input.dogId, input.skillIds);
   const persisted = notify();
   logEvent(
-    'Training report created',
+    'Training log created',
     `dog ${input.dogId}, ${input.phase}${input.redFlag ? ', red-flagged' : ''}, ${input.skillIds.length} skill(s) worked on`,
   );
   return { report, persisted };
@@ -756,7 +865,7 @@ export function toggleReportRedFlag(id: string): void {
   report.redFlag = !report.redFlag;
   report.updatedDate = now();
   notify();
-  logEvent('Report red flag toggled', `report ${id} -> ${report.redFlag}`);
+  logEvent('Log red flag toggled', `log ${id} -> ${report.redFlag}`);
 }
 
 export interface UpdateReportInput {
@@ -779,7 +888,7 @@ export function updateReport(id: string, updates: UpdateReportInput): boolean {
   markSkillsInProgress(report.dogId, updates.skillIds);
   recomputeDogSkillProgress(report.dogId);
   const persisted = notify();
-  logEvent('Report updated', id);
+  logEvent('Log updated', id);
   return persisted;
 }
 
@@ -789,7 +898,7 @@ export function deleteReport(id: string): void {
   db.reports = db.reports.filter((r) => r.id !== id);
   recomputeDogSkillProgress(report.dogId);
   notify();
-  logEvent('Report deleted', id);
+  logEvent('Log deleted', id);
 }
 
 // ---- Locations ----
@@ -853,18 +962,13 @@ export function deleteChecklistItem(id: string): void {
   logEvent('Skill deleted', id);
 }
 
-export function reorderChecklistItem(id: string, direction: 'up' | 'down'): void {
-  const item = db.checklistItems.find((i) => i.id === id);
-  if (!item) return;
-  const siblings = db.checklistItems
-    .filter((i) => i.phase === item.phase)
-    .sort((a, b) => a.sortOrder - b.sortOrder);
-  const index = siblings.findIndex((i) => i.id === id);
-  const swapIndex = direction === 'up' ? index - 1 : index + 1;
-  if (swapIndex < 0 || swapIndex >= siblings.length) return;
-  const other = siblings[swapIndex];
-  [item.sortOrder, other.sortOrder] = [other.sortOrder, item.sortOrder];
+export function reorderChecklistItems(phase: Phase, orderedIds: string[]): void {
+  orderedIds.forEach((id, index) => {
+    const item = db.checklistItems.find((i) => i.id === id && i.phase === phase);
+    if (item) item.sortOrder = index;
+  });
   notify();
+  logEvent('Skills reordered', `phase ${phase}`);
 }
 
 export function useDogCompletions(dogId: string): DogChecklistCompletion[] {
@@ -887,6 +991,7 @@ export function toggleChecklistCompletion(
       inProgress: false,
       dateCompleted: null,
       notes: null,
+      flagged: false,
     };
     db.completions.push(completion);
   }
@@ -898,6 +1003,35 @@ export function toggleChecklistCompletion(
   logEvent(
     'Checklist item toggled',
     `dog ${dogId}, item ${checklistItemId} -> ${completion.completed}`,
+  );
+}
+
+// Independent of completed/in-progress state — a skill can be flagged whether
+// it's not started, in progress, or already completed. Kept separate from the
+// whole-log red flag (#34), which flags an entire training log rather than
+// one specific skill.
+export function toggleChecklistItemFlag(dogId: string, checklistItemId: string): void {
+  let completion = db.completions.find(
+    (c) => c.dogId === dogId && c.checklistItemId === checklistItemId,
+  );
+  if (!completion) {
+    completion = {
+      id: uid(),
+      dogId,
+      checklistItemId,
+      completed: false,
+      inProgress: false,
+      dateCompleted: null,
+      notes: null,
+      flagged: false,
+    };
+    db.completions.push(completion);
+  }
+  completion.flagged = !completion.flagged;
+  notify();
+  logEvent(
+    'Checklist item flag toggled',
+    `dog ${dogId}, item ${checklistItemId} -> ${completion.flagged}`,
   );
 }
 
@@ -944,18 +1078,13 @@ export function deleteMilestoneTemplate(id: string): void {
   logEvent('Milestone template deleted', id);
 }
 
-export function reorderMilestoneTemplate(id: string, direction: 'up' | 'down'): void {
-  const template = db.milestoneTemplates.find((m) => m.id === id);
-  if (!template) return;
-  const siblings = db.milestoneTemplates
-    .filter((m) => m.phase === template.phase)
-    .sort((a, b) => a.sortOrder - b.sortOrder);
-  const index = siblings.findIndex((m) => m.id === id);
-  const swapIndex = direction === 'up' ? index - 1 : index + 1;
-  if (swapIndex < 0 || swapIndex >= siblings.length) return;
-  const other = siblings[swapIndex];
-  [template.sortOrder, other.sortOrder] = [other.sortOrder, template.sortOrder];
+export function reorderMilestoneTemplates(phase: Phase, orderedIds: string[]): void {
+  orderedIds.forEach((id, index) => {
+    const template = db.milestoneTemplates.find((m) => m.id === id && m.phase === phase);
+    if (template) template.sortOrder = index;
+  });
   notify();
+  logEvent('Milestones reordered', `phase ${phase}`);
 }
 
 export function useDogMilestoneCompletions(dogId: string): DogMilestoneCompletion[] {
