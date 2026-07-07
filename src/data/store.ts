@@ -1435,7 +1435,7 @@ export function useTrainerHistoryStats(): TrainerHistoryStats {
   const state = useDatabase();
 
   return useMemo(() => {
-    const { dogs, reports, checklistItems, dogMilestoneCompletions } = state;
+    const { dogs, reports, checklistItems, dogMilestoneCompletions, milestoneTemplates } = state;
 
     const graduatedDogs = dogs.filter((d) => d.graduated).length;
     const releasedDogs = dogs.filter((d) => d.released).length;
@@ -1444,8 +1444,16 @@ export function useTrainerHistoryStats(): TrainerHistoryStats {
     const successRateOverall = computeSuccessRate(dogs);
     const successRateRefined = computeSuccessRate(dogs.filter((d) => !d.excludedFromStats));
 
+    // Only completions on milestones *currently* flagged isFinalOutcomeMilestone
+    // count — otherwise outcomes recorded against a since-unflagged milestone
+    // (e.g. the trainer re-pointed the flag at a different milestone) would
+    // keep polluting a bar the UI labels as "the" final-outcome milestone.
+    const finalOutcomeMilestoneIds = new Set(
+      milestoneTemplates.filter((m) => m.isFinalOutcomeMilestone).map((m) => m.id),
+    );
     const finalOutcomeCounts = dogMilestoneCompletions.reduce<FinalOutcomeCounts>(
       (acc, c) => {
+        if (!finalOutcomeMilestoneIds.has(c.milestoneTemplateId)) return acc;
         if (c.outcome === 'Placement Ready') acc.placementReady += 1;
         else if (c.outcome === 'Additional Objectives') acc.additionalObjectives += 1;
         else if (c.outcome === 'Fail') acc.fail += 1;
