@@ -8,8 +8,8 @@ import {
   deleteMilestoneTemplate,
   renameChecklistItem,
   renameMilestoneTemplate,
-  reorderChecklistItem,
-  reorderMilestoneTemplate,
+  reorderChecklistItems,
+  reorderMilestoneTemplates,
   useChecklistItems,
   useMilestoneTemplates,
 } from '../data/store';
@@ -58,7 +58,7 @@ export function ManageTemplates() {
         onAdd={(title) => createChecklistItem(phase, title)}
         onRename={renameChecklistItem}
         onDelete={deleteChecklistItem}
-        onMove={reorderChecklistItem}
+        onReorder={(orderedIds) => reorderChecklistItems(phase, orderedIds)}
       />
 
       <TemplateListEditor
@@ -68,7 +68,7 @@ export function ManageTemplates() {
         onAdd={(title) => createMilestoneTemplate(phase, title)}
         onRename={renameMilestoneTemplate}
         onDelete={deleteMilestoneTemplate}
-        onMove={reorderMilestoneTemplate}
+        onReorder={(orderedIds) => reorderMilestoneTemplates(phase, orderedIds)}
       />
     </div>
   );
