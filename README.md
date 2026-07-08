@@ -1,5 +1,7 @@
 # Tanzer Training Tracker
 
+**Live: [tanzer.systems/trainingtracker](https://tanzer.systems/trainingtracker)**
+
 A dog-training documentation app: organize dogs into folders, open a dog
 profile, log training reports, and track progress toward graduation.
 
