@@ -9,9 +9,11 @@ import type {
   Folder,
   GraduationStatus,
   Location,
+  MilestoneOutcomeAttempt,
   MilestoneTemplate,
   Phase,
   PhaseChecklistItem,
+  SharedReportView,
   TrainingReport,
 } from '../types';
 import {
@@ -29,13 +31,18 @@ import {
 import { buildDefaultChecklist } from './defaultChecklist';
 import { buildDefaultMilestones } from './defaultMilestones';
 import { logError, logEvent } from '../lib/diagnostics';
-import { ApiError, fetchData, putData, uploadPhoto } from '../lib/api';
+import { ApiError, fetchData, putData, transferDog, uploadPhoto } from '../lib/api';
 import { dataUrlToBlob } from '../lib/compressImage';
 
 let db: Database = emptyDatabase();
 let currentInstructorId: string | null = null;
 let hydrated = false;
 let lastKnownUpdatedAt: string | null = null;
+// Server-computed, read-only overlay (#32/#34) — populated on every
+// hydrateFromServer(), never included in what notify()/syncToServer() PUTs
+// (it lives entirely outside `db`), so a recipient's own stored blob can
+// never accidentally absorb another instructor's report data.
+let sharedReports: SharedReportView[] = [];
 
 // Bumped by every hydrateFromServer()/resetLocalStore() call (i.e. every
 // session transition). Async work kicked off by an earlier generation checks
@@ -155,13 +162,14 @@ export async function hydrateFromServer(instructorId: string): Promise<void> {
   const myGeneration = ++generation;
   currentInstructorId = instructorId;
   try {
-    const { blob, updatedAt } = await fetchData();
+    const { blob, updatedAt, sharedReports: sharedReportsResponse } = await fetchData();
     // A newer session (another hydrate, or a logout) has since taken over —
     // this response belongs to a session that's no longer active, so drop it
     // rather than resurrecting its data (and instructorId) as if it were current.
     if (myGeneration !== generation) return;
-    db = normalizeDatabase(blob as Record<string, unknown>);
+    db = normalizeDatabase(blob as Record<string, unknown>, instructorId);
     lastKnownUpdatedAt = updatedAt;
+    sharedReports = sharedReportsResponse as SharedReportView[];
     hydrated = true;
     syncStatus = 'synced';
     pruneUnreachableLegacyData();
@@ -183,6 +191,10 @@ export async function hydrateFromServer(instructorId: string): Promise<void> {
         // as an unconditional write, silently clobbering anything written
         // by another device in the meantime instead of correctly 409-ing.
         lastKnownUpdatedAt = cached.updatedAt;
+        // Shared history is a best-effort, online-only overlay — the local
+        // cache only ever mirrors this instructor's own blob, so there's
+        // nothing to fall back to here.
+        sharedReports = [];
         hydrated = true;
         syncStatus = 'error';
         pruneUnreachableLegacyData();
@@ -336,6 +348,10 @@ async function migratePhotosToServer(source: Database): Promise<Database> {
     source.reports.map(async (report) => ({
       ...report,
       picture: await uploadEmbeddedPhoto(report.picture),
+      // Legacy reports predate any instructor-id concept, so
+      // normalizeDatabase left authorInstructorId null — now that this data
+      // is finally being claimed by a real account, tag it with that owner.
+      authorInstructorId: report.authorInstructorId ?? currentInstructorId,
     })),
   );
   const dogMilestoneCompletions = await Promise.all(
@@ -376,6 +392,7 @@ export function resetLocalStore(): void {
   currentInstructorId = null;
   hydrated = false;
   lastKnownUpdatedAt = null;
+  sharedReports = [];
   syncStatus = 'idle';
   // A PUT belonging to the session being closed may still be in flight (its
   // completion handlers are now moot — see the generation check in
@@ -629,6 +646,8 @@ export function createDog(
     graduated: false,
     graduatedDate: null,
     excludedFromStats: false,
+    passBackSource: null,
+    passBackCopies: [],
     createdDate: now(),
     updatedDate: now(),
   };
@@ -636,6 +655,56 @@ export function createDog(
   notify();
   logEvent('Dog created', dog.name);
   return dog;
+}
+
+export interface TransferDogResult {
+  // True when this dog was already passed back to that instructor and the
+  // server returned the existing link instead of creating a second copy.
+  alreadyLinked: boolean;
+  instructorName: string;
+}
+
+// Creates a linked pass-back copy of this dog on another instructor's
+// account (#32/#34). An out-of-band await like importLegacyDatabase, not
+// the generic notify()/syncToServer() queue — the source blob was already
+// written server-side by the transfer endpoint itself, so re-PUTting it here
+// would just be a redundant, no-op write.
+export async function transferDogToInstructor(
+  dogId: string,
+  targetInstructorName: string,
+  allowDuplicate = false,
+): Promise<TransferDogResult> {
+  const myGeneration = generation;
+  const response = await transferDog(dogId, targetInstructorName, allowDuplicate);
+  const result: TransferDogResult = {
+    alreadyLinked: response.alreadyLinked ?? false,
+    instructorName: response.link.instructorName,
+  };
+
+  // A newer session has since taken over — applying this to the current
+  // generation's local state would show one account's transfer under a
+  // different one (same hazard hydrateFromServer/importLegacyDatabase guard).
+  if (myGeneration !== generation) return result;
+
+  const dog = db.dogs.find((d) => d.id === dogId);
+  if (dog && !dog.passBackCopies.some((link) => link.linkId === response.link.linkId)) {
+    db = {
+      ...db,
+      dogs: db.dogs.map((d) =>
+        d.id === dogId ? { ...d, passBackCopies: [...d.passBackCopies, response.link] } : d,
+      ),
+    };
+  }
+  lastKnownUpdatedAt = response.updatedAt;
+  if (currentInstructorId) saveServerCache(currentInstructorId, db, lastKnownUpdatedAt);
+  notifyListeners();
+  logEvent(
+    'Dog transferred',
+    result.alreadyLinked
+      ? `dog ${dogId} already passed back to ${result.instructorName}`
+      : `dog ${dogId} -> ${result.instructorName}`,
+  );
+  return result;
 }
 
 export function reorderDogs(folderId: string, orderedIds: string[]): void {
@@ -806,6 +875,17 @@ export function useReportsForDog(dogId: string): TrainingReport[] {
     .sort((a, b) => b.createdDate.localeCompare(a.createdDate));
 }
 
+// Read-only overlay of another instructor's shared reports on a pass-back
+// copy dog (#32/#34) — kept separate from useReportsForDog rather than
+// merged into it, since SharedReportView and TrainingReport are different
+// shapes (resolved labels vs. ids) meant to render differently; a silent
+// merge would force every consumer to type-discriminate.
+export function useSharedReportsForDog(dogId: string): SharedReportView[] {
+  return useSyncExternalStore(subscribe, () => sharedReports)
+    .filter((r) => r.dogId === dogId)
+    .sort((a, b) => b.createdDate.localeCompare(a.createdDate));
+}
+
 // Session counts (#35) are purely informational — derived from how many of a
 // dog's logs mention a skill/milestone as worked on, independent of whether
 // it's since been marked complete. Nothing here drives completion; the
@@ -942,6 +1022,8 @@ export function createReport(
   const report: TrainingReport = {
     id: uid(),
     ...input,
+    authorInstructorId: currentInstructorId,
+    visibility: input.redFlag ? 'private' : 'shared',
     createdDate: now(),
     updatedDate: now(),
   };
@@ -963,6 +1045,7 @@ export function toggleReportRedFlag(id: string): void {
   const report = db.reports.find((r) => r.id === id);
   if (!report) return;
   report.redFlag = !report.redFlag;
+  report.visibility = report.redFlag ? 'private' : 'shared';
   report.updatedDate = now();
   notify();
   logEvent('Log red flag toggled', `log ${id} -> ${report.redFlag}`);
@@ -983,6 +1066,7 @@ export function updateReport(id: string, updates: UpdateReportInput): boolean {
   const report = db.reports.find((r) => r.id === id);
   if (!report) return false;
   Object.assign(report, updates, { updatedDate: now() });
+  report.visibility = report.redFlag ? 'private' : 'shared';
   if (updates.locationId) {
     const location = db.locations.find((l) => l.id === updates.locationId);
     if (location) location.lastUsedDate = now();
@@ -1153,6 +1237,7 @@ export function createMilestoneTemplate(phase: Phase, title: string): MilestoneT
     title,
     sortOrder: siblingCount,
     isFinalOutcomeMilestone: false,
+    repeatable: false,
     createdDate: now(),
     updatedDate: now(),
   };
@@ -1188,6 +1273,51 @@ export function toggleMilestoneFinalOutcomeFlag(id: string): boolean {
   return persisted;
 }
 
+// Marks (or unmarks) a milestone as repeatable (#33). Turning it on runs a
+// one-time, real migration: any dog that already had a decided outcome on
+// this milestone from before it was repeatable gets that decision preserved
+// as attempt #1 in the ledger, rather than the history starting blank and
+// silently losing it. dateCompleted only ever exists for a Placement Ready
+// outcome (see DogMilestoneCompletion) — for Additional Objectives/Fail
+// there is no historical timestamp anywhere in the pre-ledger schema, so
+// those fall back to today's date and are flagged
+// migratedFromLegacyCompletion so the UI can say "date unknown (migrated)"
+// instead of presenting a fabricated date as fact.
+export function toggleMilestoneRepeatable(id: string): boolean {
+  const template = db.milestoneTemplates.find((m) => m.id === id);
+  if (!template) return false;
+  const turningOn = !template.repeatable;
+  template.repeatable = turningOn;
+  template.updatedDate = now();
+
+  if (turningOn) {
+    const alreadyLedgered = new Set(
+      db.milestoneOutcomeAttempts
+        .filter((a) => a.milestoneTemplateId === id)
+        .map((a) => a.dogId),
+    );
+    db.dogMilestoneCompletions
+      .filter(
+        (c) => c.milestoneTemplateId === id && c.outcome !== null && !alreadyLedgered.has(c.dogId),
+      )
+      .forEach((c) => {
+        db.milestoneOutcomeAttempts.push({
+          id: uid(),
+          dogId: c.dogId,
+          milestoneTemplateId: id,
+          outcome: c.outcome as FinalOutcome,
+          attemptDate: c.dateCompleted ?? now(),
+          migratedFromLegacyCompletion: true,
+          notes: null,
+        });
+      });
+  }
+
+  const persisted = notify();
+  logEvent('Milestone repeatable flag toggled', `${id} -> ${template.repeatable}`);
+  return persisted;
+}
+
 export function deleteMilestoneTemplate(id: string): void {
   db.milestoneTemplates = db.milestoneTemplates.filter((m) => m.id !== id);
   db.dogMilestoneCompletions = db.dogMilestoneCompletions.filter(
@@ -1209,6 +1339,21 @@ export function reorderMilestoneTemplates(phase: Phase, orderedIds: string[]): v
 
 export function useDogMilestoneCompletions(dogId: string): DogMilestoneCompletion[] {
   return useDatabase().dogMilestoneCompletions.filter((c) => c.dogId === dogId);
+}
+
+// Full attempt history for one dog's repeatable milestone (#33), oldest
+// first. Reads the ledger directly — no synthetic fallback needed, since by
+// the time a milestone is repeatable, toggleMilestoneRepeatable has already
+// migrated any pre-existing decision into a real ledger row.
+export function useMilestoneAttempts(
+  dogId: string,
+  milestoneTemplateId: string,
+): MilestoneOutcomeAttempt[] {
+  return useDatabase()
+    .milestoneOutcomeAttempts.filter(
+      (a) => a.dogId === dogId && a.milestoneTemplateId === milestoneTemplateId,
+    )
+    .sort((a, b) => a.attemptDate.localeCompare(b.attemptDate));
 }
 
 export function toggleDogMilestoneCompletion(
@@ -1264,18 +1409,21 @@ function findOrCreateMilestoneCompletion(
   return completion;
 }
 
-// Records the trainer's decision on a milestone flagged isFinalOutcomeMilestone
-// (e.g. the Advanced Final Blindfold). 'Placement Ready' completes the
-// milestone like a normal checkbox — it does not itself graduate the dog;
-// that's still the separate, deliberate markDogGraduated action. 'Additional
-// Objectives' leaves it incomplete: the dog keeps training. 'Fail' leaves it
-// incomplete and auto-releases the dog (respecting releaseDog's own
-// graduated-guard). Passing null clears a mis-click back to no decision.
-export function setMilestoneOutcome(
+// Pure state mutation, shared by every public entry point below: sets the
+// completion's mirrored outcome/completed/dateCompleted, and applies or
+// reverts the Fail-driven auto-release side effect by diffing against
+// whatever the completion's outcome was a moment ago. Deliberately knows
+// nothing about the attempt ledger (#33) — a repeatable milestone's history
+// is a separate concern (event creation) from "what does this dog's current
+// completion say" (state mutation), and fusing the two here is exactly what
+// would let undoing an attempt immediately recreate it. No notify()/
+// logEvent — callers own persisting and describing their own distinct
+// action.
+function applyMilestoneOutcomeState(
   dogId: string,
   milestoneTemplateId: string,
   outcome: FinalOutcome | null,
-): boolean {
+): void {
   const completion = findOrCreateMilestoneCompletion(dogId, milestoneTemplateId);
   const previousOutcome = completion.outcome;
   completion.outcome = outcome;
@@ -1284,26 +1432,98 @@ export function setMilestoneOutcome(
   refreshDogProgress(dogId);
   // Inlined rather than calling releaseDog()/reactivateDog() (which each call
   // notify() themselves) — this keeps the completion change and the
-  // release/reactivate in one atomic write/sync instead of two, and the same
-  // "graduated dogs can't be released" guard still applies.
+  // release/reactivate in the caller's single atomic write/sync, and the
+  // same "graduated dogs can't be released" guard still applies.
   const dog = db.dogs.find((d) => d.id === dogId);
   if (outcome === 'Fail' && dog && !dog.graduated) {
     dog.released = true;
     dog.releasedDate = now();
     dog.updatedDate = now();
   } else if (previousOutcome === 'Fail' && outcome !== 'Fail' && dog && dog.released) {
-    // The release was a side effect of the prior Fail outcome — clearing the
-    // mis-click or moving to Additional Objectives must undo it, or the dog
-    // is left released while the UI shows "No decision"/"Additional
-    // Objectives".
+    // The release was a side effect of the prior Fail outcome — moving off
+    // Fail (a correction, a new non-Fail attempt, or an undo) must undo it,
+    // or the dog is left released while the UI shows a different outcome.
     dog.released = false;
     dog.releasedDate = null;
     dog.updatedDate = now();
   }
+}
+
+// Records the trainer's decision on a milestone flagged isFinalOutcomeMilestone
+// (e.g. the Advanced Final Blindfold). 'Placement Ready' completes the
+// milestone like a normal checkbox — it does not itself graduate the dog;
+// that's still the separate, deliberate markDogGraduated action. 'Additional
+// Objectives' leaves it incomplete: the dog keeps training. 'Fail' leaves it
+// incomplete and auto-releases the dog. Passing null clears a mis-click back
+// to no decision. This is the non-repeatable path — it never touches the
+// attempt ledger; see recordMilestoneOutcomeAttempt for repeatable milestones.
+export function setMilestoneOutcome(
+  dogId: string,
+  milestoneTemplateId: string,
+  outcome: FinalOutcome | null,
+): boolean {
+  applyMilestoneOutcomeState(dogId, milestoneTemplateId, outcome);
   const persisted = notify();
   logEvent(
     'Milestone outcome set',
     `dog ${dogId}, milestone ${milestoneTemplateId} -> ${outcome ?? 'cleared'}`,
+  );
+  return persisted;
+}
+
+// Records a new historical attempt on a repeatable final-outcome milestone
+// (#33) — the only function that ever appends to milestoneOutcomeAttempts.
+// Pushes the event first, then mirrors it into the completion/release state
+// via the exact same applyMilestoneOutcomeState used by the non-repeatable
+// path, so "what's the dog's current status" reads identically either way.
+export function recordMilestoneOutcomeAttempt(
+  dogId: string,
+  milestoneTemplateId: string,
+  outcome: FinalOutcome,
+  notes: string | null = null,
+): boolean {
+  db.milestoneOutcomeAttempts.push({
+    id: uid(),
+    dogId,
+    milestoneTemplateId,
+    outcome,
+    attemptDate: now(),
+    migratedFromLegacyCompletion: false,
+    notes,
+  });
+  applyMilestoneOutcomeState(dogId, milestoneTemplateId, outcome);
+  const persisted = notify();
+  logEvent(
+    'Milestone attempt recorded',
+    `dog ${dogId}, milestone ${milestoneTemplateId} -> ${outcome}`,
+  );
+  return persisted;
+}
+
+// Removes the most recent attempt on a repeatable milestone (a mis-click,
+// wrong outcome selected) and recomputes the completion/release state from
+// whatever's now latest — or clears it entirely if that was the only
+// attempt. Deliberately calls applyMilestoneOutcomeState directly, never
+// recordMilestoneOutcomeAttempt or setMilestoneOutcome: this must never
+// append, or an undo would immediately recreate the very attempt it just
+// removed.
+export function deleteMostRecentMilestoneAttempt(
+  dogId: string,
+  milestoneTemplateId: string,
+): boolean {
+  const attempts = db.milestoneOutcomeAttempts
+    .filter((a) => a.dogId === dogId && a.milestoneTemplateId === milestoneTemplateId)
+    .sort((a, b) => a.attemptDate.localeCompare(b.attemptDate));
+  const last = attempts[attempts.length - 1];
+  if (!last) return false;
+
+  db.milestoneOutcomeAttempts = db.milestoneOutcomeAttempts.filter((a) => a.id !== last.id);
+  const newLatest = attempts[attempts.length - 2] ?? null;
+  applyMilestoneOutcomeState(dogId, milestoneTemplateId, newLatest?.outcome ?? null);
+  const persisted = notify();
+  logEvent(
+    'Milestone attempt undone',
+    `dog ${dogId}, milestone ${milestoneTemplateId}, removed ${last.outcome}`,
   );
   return persisted;
 }
@@ -1407,6 +1627,12 @@ export interface TrainerHistoryStats {
   successRateOverall: SuccessRate;
   successRateRefined: SuccessRate;
   finalOutcomeCounts: FinalOutcomeCounts;
+  // Every historical attempt on a repeatable final-outcome milestone (#33),
+  // not just the latest per dog — a secondary view alongside
+  // finalOutcomeCounts, which stays latest-attempt-only (see that field's
+  // computation). Zero for accounts that have never used repeatable
+  // milestones.
+  attemptHistory: { counts: FinalOutcomeCounts; dogCount: number };
   graduatedDogsList: Dog[];
 }
 
@@ -1435,7 +1661,8 @@ export function useTrainerHistoryStats(): TrainerHistoryStats {
   const state = useDatabase();
 
   return useMemo(() => {
-    const { dogs, reports, checklistItems, dogMilestoneCompletions, milestoneTemplates } = state;
+    const { dogs, reports, checklistItems, dogMilestoneCompletions, milestoneTemplates, milestoneOutcomeAttempts } =
+      state;
 
     const graduatedDogs = dogs.filter((d) => d.graduated).length;
     const releasedDogs = dogs.filter((d) => d.released).length;
@@ -1463,6 +1690,26 @@ export function useTrainerHistoryStats(): TrainerHistoryStats {
     );
     finalOutcomeCounts.total =
       finalOutcomeCounts.placementReady + finalOutcomeCounts.additionalObjectives + finalOutcomeCounts.fail;
+
+    // Every historical attempt, not just the latest per dog (contrast with
+    // finalOutcomeCounts above) — same milestone filter, different source
+    // array. A dog that failed twice before passing shows up three times
+    // here but only once (Placement Ready) in finalOutcomeCounts.
+    const attemptDogIds = new Set<string>();
+    const attemptCounts = milestoneOutcomeAttempts.reduce<FinalOutcomeCounts>(
+      (acc, a) => {
+        if (!finalOutcomeMilestoneIds.has(a.milestoneTemplateId)) return acc;
+        attemptDogIds.add(a.dogId);
+        if (a.outcome === 'Placement Ready') acc.placementReady += 1;
+        else if (a.outcome === 'Additional Objectives') acc.additionalObjectives += 1;
+        else if (a.outcome === 'Fail') acc.fail += 1;
+        return acc;
+      },
+      { placementReady: 0, additionalObjectives: 0, fail: 0, total: 0 },
+    );
+    attemptCounts.total =
+      attemptCounts.placementReady + attemptCounts.additionalObjectives + attemptCounts.fail;
+    const attemptHistory = { counts: attemptCounts, dogCount: attemptDogIds.size };
 
     const graduatedDogsList = dogs
       .filter((d) => d.graduated)
@@ -1530,6 +1777,7 @@ export function useTrainerHistoryStats(): TrainerHistoryStats {
       successRateOverall,
       successRateRefined,
       finalOutcomeCounts,
+      attemptHistory,
       graduatedDogsList,
     };
   }, [state]);

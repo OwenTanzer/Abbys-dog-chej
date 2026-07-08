@@ -5,6 +5,7 @@ import type {
   DistractionTemplate,
   Folder,
   Location,
+  MilestoneOutcomeAttempt,
   MilestoneTemplate,
   Phase,
   PhaseChecklistItem,
@@ -22,6 +23,10 @@ export interface Database {
   completions: DogChecklistCompletion[];
   milestoneTemplates: MilestoneTemplate[];
   dogMilestoneCompletions: DogMilestoneCompletion[];
+  // Append-only history of decisions on repeatable final-outcome milestones
+  // (#33) — see MilestoneOutcomeAttempt's own comment. Empty for accounts
+  // that have never flagged a milestone repeatable.
+  milestoneOutcomeAttempts: MilestoneOutcomeAttempt[];
   distractionTemplates: DistractionTemplate[];
   // One-time gate for migrateLegacyDefaultTemplates() (#30) — true means this
   // account's checklist/milestones either started on, or have already been
@@ -48,6 +53,7 @@ export function emptyDatabase(): Database {
     completions: [],
     milestoneTemplates: buildDefaultMilestones(),
     dogMilestoneCompletions: [],
+    milestoneOutcomeAttempts: [],
     distractionTemplates: [],
     templatesMigratedToAbbyDefaults: true,
     pinnedFolderId: null,
@@ -93,6 +99,7 @@ function migrateLegacyMilestones(legacy: LegacyMilestone[]): {
           title: m.title,
           sortOrder: milestoneTemplates.length,
           isFinalOutcomeMilestone: false,
+          repeatable: false,
           createdDate: m.createdDate,
           updatedDate: m.updatedDate,
         });
@@ -129,9 +136,10 @@ function backfillSortOrder<T extends { sortOrder?: number }>(
   });
 }
 
-// Dogs predating the "released" status (#13), "graduated" lock (#31), or
-// stats-exclusion flag won't have these fields in their stored JSON at all,
-// so they'd otherwise come back as undefined.
+// Dogs predating the "released" status (#13), "graduated" lock (#31),
+// stats-exclusion flag, or pass-back linkage (#32/#34) won't have these
+// fields in their stored JSON at all, so they'd otherwise come back as
+// undefined.
 function backfillDogs(dogs: Dog[]): Dog[] {
   return backfillSortOrder(
     dogs.map((dog) => ({
@@ -141,16 +149,20 @@ function backfillDogs(dogs: Dog[]): Dog[] {
       graduated: dog.graduated ?? false,
       graduatedDate: dog.graduatedDate ?? null,
       excludedFromStats: dog.excludedFromStats ?? false,
+      passBackSource: dog.passBackSource ?? null,
+      passBackCopies: dog.passBackCopies ?? [],
     })),
     (dog) => dog.folderId,
   );
 }
 
-// Templates predating the final-outcome flag won't have it stored.
+// Templates predating the final-outcome flag, or the repeatable flag (#33),
+// won't have those stored.
 function backfillMilestoneTemplates(templates: MilestoneTemplate[]): MilestoneTemplate[] {
   return templates.map((template) => ({
     ...template,
     isFinalOutcomeMilestone: template.isFinalOutcomeMilestone ?? false,
+    repeatable: template.repeatable ?? false,
   }));
 }
 
@@ -169,13 +181,22 @@ function backfillFolders(folders: Folder[]): Folder[] {
 }
 
 // Reports predating "skills worked on" (#18), "milestones worked on" and
-// "distractions encountered" (#35/#36) won't have these fields stored.
-function backfillReports(reports: TrainingReport[]): TrainingReport[] {
+// "distractions encountered" (#35/#36), or authorship/visibility (#34) won't
+// have these fields stored. ownerInstructorId is the instructor whose blob
+// this report is being loaded into, when known (see normalizeDatabase) — a
+// report missing authorInstructorId predates pass-back copies entirely, so
+// it was necessarily self-authored by whoever owns this blob.
+function backfillReports(
+  reports: TrainingReport[],
+  ownerInstructorId?: string,
+): TrainingReport[] {
   return reports.map((report) => ({
     ...report,
     skillIds: report.skillIds ?? [],
     milestoneIds: report.milestoneIds ?? [],
     distractions: report.distractions ?? [],
+    authorInstructorId: report.authorInstructorId ?? ownerInstructorId ?? null,
+    visibility: report.visibility ?? (report.redFlag ? 'private' : 'shared'),
   }));
 }
 
@@ -189,7 +210,10 @@ function backfillCompletions(completions: DogChecklistCompletion[]): DogChecklis
   }));
 }
 
-export function normalizeDatabase(parsed: Record<string, unknown>): Database {
+export function normalizeDatabase(
+  parsed: Record<string, unknown>,
+  ownerInstructorId?: string,
+): Database {
   if (
     Array.isArray(parsed.milestoneTemplates) &&
     Array.isArray(parsed.dogMilestoneCompletions)
@@ -197,12 +221,18 @@ export function normalizeDatabase(parsed: Record<string, unknown>): Database {
     const database = parsed as unknown as Database;
     database.folders = backfillFolders(database.folders ?? []);
     database.dogs = backfillDogs(database.dogs ?? []);
-    database.reports = backfillReports(database.reports ?? []);
+    database.reports = backfillReports(database.reports ?? [], ownerInstructorId);
     database.completions = backfillCompletions(database.completions ?? []);
     database.milestoneTemplates = backfillMilestoneTemplates(database.milestoneTemplates ?? []);
     database.dogMilestoneCompletions = backfillDogMilestoneCompletions(
       database.dogMilestoneCompletions ?? [],
     );
+    // Accounts predating repeatable milestones (#33) won't have this field
+    // at all — no migration needed here, since a milestone can only ever
+    // have accumulated ledger rows after being flagged repeatable, which
+    // this same normalizeDatabase pass also defaults to false for every
+    // template that predates the flag.
+    database.milestoneOutcomeAttempts = database.milestoneOutcomeAttempts ?? [];
     // Accounts predating distraction templates (#36) won't have this field at all.
     database.distractionTemplates = database.distractionTemplates ?? [];
     // Accounts persisted before #30 won't have this field at all — treat its
@@ -222,7 +252,7 @@ export function normalizeDatabase(parsed: Record<string, unknown>): Database {
   const database: Database = {
     folders: backfillFolders((parsed.folders as Folder[]) ?? []),
     dogs: backfillDogs((parsed.dogs as Dog[]) ?? []),
-    reports: backfillReports((parsed.reports as TrainingReport[]) ?? []),
+    reports: backfillReports((parsed.reports as TrainingReport[]) ?? [], ownerInstructorId),
     locations: (parsed.locations as Location[]) ?? [],
     checklistItems: (parsed.checklistItems as PhaseChecklistItem[]) ?? buildDefaultChecklist(),
     completions: backfillCompletions((parsed.completions as DogChecklistCompletion[]) ?? []),
@@ -231,6 +261,8 @@ export function normalizeDatabase(parsed: Record<string, unknown>): Database {
         ? migrated.milestoneTemplates
         : buildDefaultMilestones(),
     dogMilestoneCompletions: migrated.dogMilestoneCompletions,
+    milestoneOutcomeAttempts:
+      (parsed.milestoneOutcomeAttempts as MilestoneOutcomeAttempt[]) ?? [],
     distractionTemplates: (parsed.distractionTemplates as DistractionTemplate[]) ?? [],
     templatesMigratedToAbbyDefaults: (parsed.templatesMigratedToAbbyDefaults as boolean | undefined) ?? false,
     pinnedFolderId: (parsed.pinnedFolderId as string | null | undefined) ?? null,
@@ -296,7 +328,7 @@ export function loadServerCache(instructorId: string): ServerCacheEntry | null {
     const parsed = JSON.parse(raw) as Partial<ServerCacheEntry> | null;
     if (!parsed || typeof parsed !== 'object' || !parsed.blob) return null;
     return {
-      blob: normalizeDatabase(parsed.blob as unknown as Record<string, unknown>),
+      blob: normalizeDatabase(parsed.blob as unknown as Record<string, unknown>, instructorId),
       updatedAt: parsed.updatedAt ?? null,
     };
   } catch {

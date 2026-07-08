@@ -7,10 +7,12 @@ import { ProgressBar } from '../components/ProgressBar';
 import { uploadPhoto } from '../lib/api';
 import {
   deleteDog,
+  deleteMostRecentMilestoneAttempt,
   deleteReport,
   markDogGraduated,
   moveDog,
   reactivateDog,
+  recordMilestoneOutcomeAttempt,
   releaseDog,
   removeDogGraduatedStatus,
   setMilestoneOutcome,
@@ -19,6 +21,7 @@ import {
   toggleDogExcludedFromStats,
   toggleDogMilestoneCompletion,
   toggleReportRedFlag,
+  transferDogToInstructor,
   updateDog,
   updateReport,
   useChecklistItems,
@@ -31,8 +34,10 @@ import {
   useDogWorkedToday,
   useFolder,
   useLocations,
+  useMilestoneAttempts,
   useMilestoneTemplates,
   useReportsForDog,
+  useSharedReportsForDog,
 } from '../data/store';
 import {
   DISTRACTION_SEVERITIES,
@@ -40,8 +45,10 @@ import {
   PHASES,
   type DistractionSeverity,
   type DistractionTemplate,
+  type DogMilestoneCompletion,
   type FinalOutcome,
   type Location,
+  type MilestoneTemplate,
   type Phase,
   type TrainingReport,
 } from '../types';
@@ -230,6 +237,142 @@ function EditReportForm({
   );
 }
 
+// A repeatable final-outcome milestone (#33) renders as read-only current
+// state plus a history and an explicit "Record Attempt" action, not a
+// <select> — a select communicates "change this value," which is the wrong
+// metaphor for an append-only historical event (and is silently broken for
+// the most common retry case: picking the same outcome again, e.g. Fail
+// after Fail, wouldn't fire a change event at all). Its own component
+// because useMilestoneAttempts is a hook and this renders inside a .map().
+function RepeatableMilestoneOutcome({
+  dogId,
+  dogName,
+  milestone,
+  completion,
+}: {
+  dogId: string;
+  dogName: string;
+  milestone: MilestoneTemplate;
+  completion: DogMilestoneCompletion | undefined;
+}) {
+  const attempts = useMilestoneAttempts(dogId, milestone.id);
+  const [recording, setRecording] = useState(false);
+  const [outcome, setOutcome] = useState<FinalOutcome>('Placement Ready');
+  const [notes, setNotes] = useState('');
+
+  function handleRecord(e: React.FormEvent) {
+    e.preventDefault();
+    if (
+      outcome === 'Fail' &&
+      !confirm(
+        `Mark ${dogName} as Failed on this evaluation? This automatically releases them from training.`,
+      )
+    ) {
+      return;
+    }
+    recordMilestoneOutcomeAttempt(dogId, milestone.id, outcome, notes.trim() || null);
+    setRecording(false);
+    setNotes('');
+    setOutcome('Placement Ready');
+  }
+
+  function handleUndo() {
+    if (!confirm('Remove the most recent attempt for this milestone? This cannot be undone.')) {
+      return;
+    }
+    deleteMostRecentMilestoneAttempt(dogId, milestone.id);
+  }
+
+  return (
+    <li className="rounded-lg border border-gray-200 dark:border-gray-700 p-2 space-y-1.5">
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <span className="font-medium text-gray-800 dark:text-gray-200">{milestone.title}</span>
+        <span className="text-xs text-gray-400" title="Each recorded outcome adds to this milestone's history instead of overwriting the last decision">
+          🔁 Repeatable
+        </span>
+      </div>
+      {completion?.outcome ? (
+        <span className={`text-xs font-medium ${OUTCOME_STYLES[completion.outcome]}`}>
+          {OUTCOME_ICONS[completion.outcome]} Current: {completion.outcome}
+        </span>
+      ) : (
+        <span className="text-xs text-gray-400">No attempts yet</span>
+      )}
+      {attempts.length > 0 && (
+        <ul className="space-y-0.5 text-xs text-gray-500">
+          {attempts.map((a) => (
+            <li key={a.id}>
+              {OUTCOME_ICONS[a.outcome]} {a.outcome} —{' '}
+              {a.migratedFromLegacyCompletion
+                ? 'date unknown (migrated)'
+                : new Date(a.attemptDate).toLocaleDateString()}
+              {a.notes && <> — {a.notes}</>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => setRecording(true)}
+          className="rounded-md border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs font-medium hover:bg-gray-50 dark:hover:bg-gray-800"
+        >
+          + Record Attempt
+        </button>
+        {attempts.length > 0 && (
+          <button
+            type="button"
+            onClick={handleUndo}
+            className="rounded-md border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
+          >
+            Undo last attempt
+          </button>
+        )}
+      </div>
+      {recording && (
+        <form
+          onSubmit={handleRecord}
+          className="space-y-1.5 rounded-md border border-sky-300 dark:border-sky-700 p-2"
+        >
+          <select
+            value={outcome}
+            onChange={(e) => setOutcome(e.target.value as FinalOutcome)}
+            className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-transparent px-2 py-1 text-sm"
+          >
+            {FINAL_OUTCOMES.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Notes (optional)"
+            rows={2}
+            className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-transparent px-2 py-1 text-sm"
+          />
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              className="rounded-md bg-sky-500 px-3 py-1 text-xs font-medium text-white hover:bg-sky-600"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => setRecording(false)}
+              className="rounded-md border border-gray-300 dark:border-gray-600 px-3 py-1 text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </li>
+  );
+}
+
 export function DogProfile() {
   const { dogId } = useParams<{ dogId: string }>();
   const navigate = useNavigate();
@@ -242,6 +385,7 @@ export function DogProfile() {
   const allMilestoneTemplates = useMilestoneTemplates();
   const milestoneCompletions = useDogMilestoneCompletions(dogId ?? '');
   const allReports = useReportsForDog(dogId ?? '');
+  const sharedReports = useSharedReportsForDog(dogId ?? '');
   const workedToday = useDogWorkedToday(dogId ?? '');
   const locations = useLocations();
   const distractionTemplates = useDistractionTemplates();
@@ -258,6 +402,10 @@ export function DogProfile() {
   const [moving, setMoving] = useState(false);
   const [pendingPhotoFile, setPendingPhotoFile] = useState<File | null>(null);
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [transferring, setTransferring] = useState(false);
+  const [transferName, setTransferName] = useState('');
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferError, setTransferError] = useState<string | null>(null);
 
   const reports = useMemo(() => {
     return allReports.filter((r) => {
@@ -365,6 +513,29 @@ export function DogProfile() {
     removeDogGraduatedStatus(dog.id);
   }
 
+  function handleTransferSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!dog) return;
+    const name = transferName.trim();
+    if (!name) return;
+    setTransferBusy(true);
+    setTransferError(null);
+    transferDogToInstructor(dog.id, name)
+      .then((result) => {
+        setTransferring(false);
+        setTransferName('');
+        alert(
+          result.alreadyLinked
+            ? `${dog.name} was already passed back to ${result.instructorName}.`
+            : `${dog.name} was passed back to ${result.instructorName}.`,
+        );
+      })
+      .catch((err: unknown) => {
+        setTransferError(err instanceof Error ? err.message : 'Transfer failed.');
+      })
+      .finally(() => setTransferBusy(false));
+  }
+
   function handleDeleteReport(id: string) {
     if (!confirm('Delete this training log? This cannot be undone.')) return;
     deleteReport(id);
@@ -446,6 +617,14 @@ export function DogProfile() {
                   className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-400"
                 >
                   Excluded from stats
+                </span>
+              )}
+              {dog.passBackSource && (
+                <span
+                  title="This is a pass-back copy — the original stays on the source instructor's own page"
+                  className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700 dark:bg-sky-950 dark:text-sky-400"
+                >
+                  🔁 Passed back from {dog.passBackSource.instructorName}
                 </span>
               )}
             </div>
@@ -559,12 +738,60 @@ export function DogProfile() {
           {dog.excludedFromStats ? '📊 Excluded from Stats' : '📊 Exclude from Stats'}
         </button>
         <button
+          onClick={() => setTransferring(true)}
+          className="rounded-md border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800"
+        >
+          🔁 Transfer to Instructor
+        </button>
+        <button
           onClick={handleDeleteDog}
           className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
         >
           Delete Profile
         </button>
       </div>
+      {transferring && (
+        <form
+          onSubmit={handleTransferSubmit}
+          className="space-y-2 rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-sm"
+        >
+          <p className="text-gray-600 dark:text-gray-400">
+            Creates a copy of {dog.name} on another instructor's page, marked as a pass-back to
+            them — {dog.name}'s own record here is unaffected.
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Shared training history will appear for the receiving instructor; private
+            red-flagged logs will not.
+          </p>
+          <input
+            autoFocus
+            value={transferName}
+            onChange={(e) => setTransferName(e.target.value)}
+            placeholder="Instructor's name"
+            className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-transparent px-2 py-1"
+          />
+          {transferError && <p className="text-xs text-red-500">{transferError}</p>}
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={transferBusy || !transferName.trim()}
+              className="rounded-md bg-sky-500 px-3 py-1 font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+            >
+              {transferBusy ? 'Creating…' : 'Create linked copy'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTransferring(false);
+                setTransferError(null);
+              }}
+              className="rounded-md border border-gray-300 dark:border-gray-600 px-3 py-1 hover:bg-gray-50 dark:hover:bg-gray-800"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
       {moving && (
         <MoveDialog
           title={`Move ${dog.name} to…`}
@@ -661,6 +888,17 @@ export function DogProfile() {
         <ul className="space-y-1">
           {milestones.map((m) => {
             const completion = milestoneCompletions.find((c) => c.milestoneTemplateId === m.id);
+            if (m.isFinalOutcomeMilestone && m.repeatable) {
+              return (
+                <RepeatableMilestoneOutcome
+                  key={m.id}
+                  dogId={dog.id}
+                  dogName={dog.name}
+                  milestone={m}
+                  completion={completion}
+                />
+              );
+            }
             if (m.isFinalOutcomeMilestone) {
               return (
                 <li
@@ -877,6 +1115,60 @@ export function DogProfile() {
           )}
         </ul>
       </section>
+
+      {dog.passBackSource && sharedReports.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-gray-500">
+            Read-only Shared History from {dog.passBackSource.instructorName}
+          </h2>
+          <p className="text-xs text-gray-400">
+            These are {dog.passBackSource.instructorName}'s own logs, shown for context — they
+            can't be edited here, and update after a refresh/reload rather than instantly.
+          </p>
+          <ul className="space-y-2">
+            {sharedReports.map((r) => (
+              <li
+                key={r.id}
+                className="rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50/40 dark:bg-sky-950/20 p-3 space-y-1"
+              >
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">
+                    {r.phase} · {new Date(r.createdDate).toLocaleDateString()}
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    Logged by {r.authorInstructorName}
+                  </span>
+                </div>
+                {r.locationLabel && <p className="text-xs text-gray-500">📍 {r.locationLabel}</p>}
+                {r.picture && (
+                  <img
+                    src={r.picture}
+                    alt="Training log attachment"
+                    className="h-24 w-24 rounded-md object-cover"
+                  />
+                )}
+                <p className="text-sm text-gray-700 dark:text-gray-300">{r.notes}</p>
+                {r.skillLabels.length > 0 && (
+                  <p className="text-xs text-gray-500">
+                    Skills worked on: {r.skillLabels.join(', ')}
+                  </p>
+                )}
+                {r.milestoneLabels.length > 0 && (
+                  <p className="text-xs text-gray-500">
+                    Milestones worked on: {r.milestoneLabels.join(', ')}
+                  </p>
+                )}
+                {r.distractionLabels.length > 0 && (
+                  <p className="text-xs text-gray-500">
+                    Distractions:{' '}
+                    {r.distractionLabels.map((d) => `${d.title} (${d.severity})`).join(', ')}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }
