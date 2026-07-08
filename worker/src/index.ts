@@ -364,10 +364,26 @@ async function handlePutData(request: Request, env: Env): Promise<Response> {
 
 // Creates the linked pass-back copy (#32/#34): a brand-new Dog in the target
 // instructor's own blob, carrying passBackSource back to the origin, plus a
-// matching passBackCopies entry (same linkId) on the source dog. This is the
+// row in dog_transfers recording the relation authoritatively. This is the
 // first endpoint that ever writes to two different instructors' rows in one
 // request — everything else in this file is scoped to the caller's own
 // instructor_id only.
+//
+// The transfer relation itself lives in dog_transfers (a single-row INSERT,
+// no CAS ambiguity — link_id is always a fresh UUID) rather than inside two
+// opaque blob columns, specifically to avoid coupling this endpoint's
+// atomicity to *two* independent whole-blob CAS writes. Only the target
+// blob write (materializing the copy Dog) is CAS'd against a genuine,
+// routine race — a concurrent edit from the target instructor's own other
+// session. The dog_transfers insert that follows it can only fail on an
+// actual DB error, not a routine concurrent edit, so the "did the whole
+// transfer land" question no longer depends on two independent optimistic
+// writes both landing in the same request. The source blob's
+// passBackCopies entry (kept for display continuity — see BlobDog) is now a
+// best-effort denormalized cache, not authoritative: if that write loses a
+// race, the transfer has still fully succeeded (target dog created,
+// dog_transfers row inserted), so it's simply retried on a best-effort
+// basis rather than rolled back.
 async function handleTransferDog(request: Request, env: Env): Promise<Response> {
   const auth = await requireAuth(request, env);
   if (auth instanceof Response) return auth;
@@ -413,13 +429,30 @@ async function handleTransferDog(request: Request, env: Env): Promise<Response> 
   }
 
   // Idempotency: repeating the same transfer (double-tap, retried request)
-  // must not silently fork the dog into two divergent copies.
-  const existingLink = sourceDog.passBackCopies.find((link) => link.instructorId === target.id);
-  if (existingLink && !body.allowDuplicate) {
+  // must not silently fork the dog into two divergent copies. Queries
+  // dog_transfers rather than sourceDog.passBackCopies — the latter is now
+  // a best-effort cache that can legitimately lag behind, so it's no longer
+  // safe to treat as authoritative for this check.
+  const existingTransfer = await env.DB.prepare(
+    'SELECT link_id, target_dog_id, linked_date FROM dog_transfers WHERE source_dog_id = ? AND target_instructor_id = ?',
+  )
+    .bind(dogId, target.id)
+    .first<{ link_id: string; target_dog_id: string; linked_date: string }>();
+  if (existingTransfer && !body.allowDuplicate) {
     return json(
       request,
       env,
-      { alreadyLinked: true, link: existingLink, updatedAt: sourceRow.updated_at },
+      {
+        alreadyLinked: true,
+        link: {
+          linkId: existingTransfer.link_id,
+          instructorId: target.id,
+          instructorName: target.name,
+          dogId: existingTransfer.target_dog_id,
+          linkedDate: existingTransfer.linked_date,
+        },
+        updatedAt: sourceRow.updated_at,
+      },
       200,
     );
   }
@@ -493,16 +526,10 @@ async function handleTransferDog(request: Request, env: Env): Promise<Response> 
     dogs: [...targetDogs, newDog],
   };
 
-  // CAS'd, sequential, with best-effort compensation on partial failure —
-  // NOT an unconditional two-row write. This endpoint (unlike
-  // importLegacyDatabase's unconditional PUT, which only ever overwrites
-  // the importing account's own row) touches two different instructors'
-  // rows, so an unconditional write could silently erase the target
-  // trainer's latest edits if they're using the app at the same moment.
-  // D1 batch() only rolls back on a thrown error, not on a conditional
-  // UPDATE matching zero rows, so batching two CAS'd statements together
-  // would risk letting one half of a transfer commit without the other —
-  // these are deliberately two separate round trips instead.
+  // Step 1: CAS the target blob write — the one genuine, routine race in
+  // this endpoint (the target instructor editing concurrently). Nothing has
+  // been committed yet if this fails; the client just retries the whole
+  // transfer.
   const targetWrite = await env.DB.prepare(
     'UPDATE instructor_data SET blob = ?, updated_at = ? WHERE instructor_id = ? AND updated_at = ?',
   )
@@ -519,38 +546,49 @@ async function handleTransferDog(request: Request, env: Env): Promise<Response> 
     dogId: newDogId,
     linkedDate: now,
   };
+
+  // Step 2: record the transfer authoritatively. Not CAS'd — link_id is a
+  // fresh UUID, so this has no "someone else's write" to race against; it
+  // only fails on a genuine DB error. If it does, the target dog now exists
+  // without a recorded link — a real inconsistency, but a far rarer failure
+  // mode than the target write's routine CAS race, so a best-effort
+  // rollback of the target write is enough here rather than a full
+  // multi-step compensation scheme.
+  try {
+    await env.DB.prepare(
+      'INSERT INTO dog_transfers (link_id, source_instructor_id, source_dog_id, target_instructor_id, target_dog_id, linked_date) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+      .bind(linkId, auth, dogId, target.id, newDogId, now)
+      .run();
+  } catch (err) {
+    console.error('dog_transfers insert failed after target blob write succeeded', err);
+    await env.DB.prepare(
+      'UPDATE instructor_data SET blob = ?, updated_at = ? WHERE instructor_id = ? AND updated_at = ?',
+    )
+      .bind(targetRow.blob, new Date().toISOString(), target.id, now)
+      .run();
+    return errorResponse(request, env, 'Transfer could not be recorded — try again', 500);
+  }
+
+  // Step 3: best-effort display-continuity update of the source dog's
+  // passBackCopies — not part of the transfer's correctness (dog_transfers
+  // is already authoritative), so a lost CAS race here just means this
+  // field lags until the next successful write touches it. One attempt,
+  // no retry, no rollback of steps 1-2 if it doesn't land.
   const updatedSourceBlob = {
     ...sourceBlob,
     dogs: sourceDogs.map((d) =>
       d.id === dogId ? { ...d, passBackCopies: [...d.passBackCopies, newLink] } : d,
     ),
   };
-
   const sourceWrite = await env.DB.prepare(
     'UPDATE instructor_data SET blob = ?, updated_at = ? WHERE instructor_id = ? AND updated_at = ?',
   )
     .bind(JSON.stringify(updatedSourceBlob), now, auth, sourceRow.updated_at)
     .run();
+  const sourceUpdatedAt = sourceWrite.meta.changes > 0 ? now : sourceRow.updated_at;
 
-  if (sourceWrite.meta.changes === 0) {
-    // Best-effort compensation, not a real cross-row transaction: roll the
-    // target write back, conditioned on the updated_at this request itself
-    // just set (a value only this request knows), so it succeeds unless the
-    // target instructor wrote again in the narrow window since. If that
-    // rollback CAS also fails (a second concurrent target write), the
-    // result is a genuinely inconsistent state — target has the copy,
-    // source has no forward link — that this endpoint does not auto-repair.
-    // Known technical debt: the durable fix is a dedicated link table so
-    // the transfer relation isn't hostage to whole-blob CAS at all.
-    await env.DB.prepare(
-      'UPDATE instructor_data SET blob = ?, updated_at = ? WHERE instructor_id = ? AND updated_at = ?',
-    )
-      .bind(targetRow.blob, new Date().toISOString(), target.id, now)
-      .run();
-    return errorResponse(request, env, 'Data changed elsewhere — reload before continuing', 409);
-  }
-
-  return json(request, env, { dog: newDog, link: newLink, updatedAt: now }, 201);
+  return json(request, env, { dog: newDog, link: newLink, updatedAt: sourceUpdatedAt }, 201);
 }
 
 async function handleUploadPhoto(request: Request, env: Env): Promise<Response> {
