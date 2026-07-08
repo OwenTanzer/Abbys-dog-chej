@@ -58,6 +58,7 @@ interface BlobReport {
   id: string;
   dogId: string;
   phase: string;
+  redFlag: boolean;
   locationId: string | null;
   notes: string;
   picture: string | null;
@@ -68,6 +69,41 @@ interface BlobReport {
   visibility: string;
   createdDate: string;
   updatedDate: string;
+}
+
+// The Worker reads raw stored blobs directly from D1 — it never goes
+// through the frontend's normalizeDatabase (src/data/db.ts), which only
+// runs client-side, on load, and isn't guaranteed to have run-and-saved for
+// any given account: hydrateFromServer normalizes into the client's
+// in-memory state but doesn't PUT the result back, so an account that
+// hasn't triggered a mutation since before #32/#33/#34 shipped can still
+// have these fields genuinely missing in what's stored server-side. These
+// two helpers are the Worker-side equivalent of backfillDogs/backfillReports
+// in db.ts, applied only to the fields this file actually reads — an
+// undefined passBackCopies would throw on spread (`[...undefined, x]`), and
+// an undefined authorInstructorId/visibility would silently exclude an
+// old-but-otherwise-eligible report from the shared projection instead of
+// correctly defaulting it (mirrors normalizeDatabase's own
+// `authorInstructorId ?? ownerInstructorId` rule: a report predating
+// authorship tracking was necessarily self-authored by whoever owns the
+// blob it's found in).
+function normalizeBlobDog(dog: BlobDog): BlobDog {
+  return {
+    ...dog,
+    passBackSource: dog.passBackSource ?? null,
+    passBackCopies: dog.passBackCopies ?? [],
+  };
+}
+
+function normalizeBlobReport(report: BlobReport, ownerInstructorId: string): BlobReport {
+  return {
+    ...report,
+    skillIds: report.skillIds ?? [],
+    milestoneIds: report.milestoneIds ?? [],
+    distractions: report.distractions ?? [],
+    authorInstructorId: report.authorInstructorId ?? ownerInstructorId,
+    visibility: report.visibility ?? (report.redFlag ? 'private' : 'shared'),
+  };
 }
 
 interface BlobTitledItem {
@@ -305,7 +341,7 @@ async function handleGetData(request: Request, env: Env): Promise<Response> {
   // copied once and left to drift, so a report going private just stops
   // appearing on the next GET and a newly-shared one just starts — no
   // separate "un-sync" step needed anywhere.
-  const dogs = (blob.dogs as BlobDog[] | undefined) ?? [];
+  const dogs = ((blob.dogs as BlobDog[] | undefined) ?? []).map(normalizeBlobDog);
   const sourceInstructorIds = Array.from(
     new Set(
       dogs
@@ -323,7 +359,14 @@ async function handleGetData(request: Request, env: Env): Promise<Response> {
       .bind(...sourceInstructorIds)
       .all<{ instructor_id: string; blob: string }>();
     const sourceBlobsByInstructorId = new Map(
-      sourceRows.results.map((r) => [r.instructor_id, JSON.parse(r.blob) as Record<string, unknown>]),
+      sourceRows.results.map((r) => {
+        const sourceBlob = JSON.parse(r.blob) as Record<string, unknown>;
+        const rawReports = (sourceBlob.reports as BlobReport[] | undefined) ?? [];
+        const normalizedReports = rawReports.map((report) =>
+          normalizeBlobReport(report, r.instructor_id),
+        );
+        return [r.instructor_id, { ...sourceBlob, reports: normalizedReports }];
+      }),
     );
     sharedReports = resolveSharedReports(dogs, sourceBlobsByInstructorId);
   }
@@ -407,7 +450,10 @@ async function handleTransferDog(request: Request, env: Env): Promise<Response> 
   if (!sourceRow) return errorResponse(request, env, 'No data found for this instructor', 404);
 
   const sourceBlob = JSON.parse(sourceRow.blob) as Record<string, unknown>;
-  const sourceDogs = (sourceBlob.dogs as BlobDog[] | undefined) ?? [];
+  // Normalized before use: an old, never-resaved dog record with no
+  // passBackCopies at all would otherwise throw on `[...d.passBackCopies, x]`
+  // below (spreading undefined) — see normalizeBlobDog's own comment.
+  const sourceDogs = ((sourceBlob.dogs as BlobDog[] | undefined) ?? []).map(normalizeBlobDog);
   const sourceDog = sourceDogs.find((d) => d.id === dogId);
   if (!sourceDog) return errorResponse(request, env, 'Dog not found', 404);
 
