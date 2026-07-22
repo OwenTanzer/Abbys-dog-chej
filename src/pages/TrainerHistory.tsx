@@ -114,7 +114,7 @@ function FinalOutcomeBar({ counts }: { counts: FinalOutcomeCounts }) {
 export function TrainerHistory() {
   const stats = useTrainerHistoryStats();
   const session = useSession();
-  const [refinedRate, setRefinedRate] = useState(false);
+  const [refinedRate, setRefinedRate] = useState(true);
   const [showGraduatedList, setShowGraduatedList] = useState(false);
   const pinnedFolderId = usePinnedFolderId();
   const pinnedFolder = useFolder(pinnedFolderId);
@@ -320,17 +320,6 @@ export function TrainerHistory() {
           <div className="flex gap-1 text-xs">
             <button
               type="button"
-              onClick={() => setRefinedRate(false)}
-              className={
-                !refinedRate
-                  ? 'rounded-md bg-sky-500 px-2 py-1 font-medium text-white'
-                  : 'rounded-md border border-gray-300 dark:border-gray-600 px-2 py-1 hover:bg-gray-50 dark:hover:bg-gray-800'
-              }
-            >
-              Overall
-            </button>
-            <button
-              type="button"
               onClick={() => setRefinedRate(true)}
               title="Omits dogs marked Excluded from Stats (pass-backs, health releases, etc.)"
               className={
@@ -340,6 +329,17 @@ export function TrainerHistory() {
               }
             >
               Refined
+            </button>
+            <button
+              type="button"
+              onClick={() => setRefinedRate(false)}
+              className={
+                !refinedRate
+                  ? 'rounded-md bg-sky-500 px-2 py-1 font-medium text-white'
+                  : 'rounded-md border border-gray-300 dark:border-gray-600 px-2 py-1 hover:bg-gray-50 dark:hover:bg-gray-800'
+              }
+            >
+              Overall
             </button>
           </div>
         </div>
