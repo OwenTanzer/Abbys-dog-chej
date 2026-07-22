@@ -1,3 +1,4 @@
+import { legacySessionDate } from '../../shared/sessionDate';
 import type {
   Dog,
   DogChecklistCompletion,
@@ -197,6 +198,7 @@ function backfillReports(
     distractions: report.distractions ?? [],
     authorInstructorId: report.authorInstructorId ?? ownerInstructorId ?? null,
     visibility: report.visibility ?? (report.redFlag ? 'private' : 'shared'),
+    sessionDate: report.sessionDate ?? legacySessionDate(report.createdDate),
   }));
 }
 

@@ -1,3 +1,4 @@
+import { legacySessionDate } from '../../shared/sessionDate';
 import { generateId, generateToken, hashPasscode, sessionExpiry, verifyPasscode } from './auth';
 import type { Env } from './types';
 
@@ -67,6 +68,7 @@ interface BlobReport {
   distractions: BlobDistractionObservation[];
   authorInstructorId: string | null;
   visibility: string;
+  sessionDate?: string;
   createdDate: string;
   updatedDate: string;
 }
@@ -172,6 +174,7 @@ function resolveSharedReports(
           severity: d.severity,
         })),
         authorInstructorName: link.instructorName,
+        sessionDate: report.sessionDate ?? legacySessionDate(report.createdDate),
         createdDate: report.createdDate,
         updatedDate: report.updatedDate,
       });

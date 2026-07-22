@@ -1,3 +1,4 @@
+import { isFutureSessionDate, localSessionDate } from '../../shared/sessionDate';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, uploadPhoto } from '../lib/api';
@@ -24,6 +25,7 @@ export function NewReport() {
   const [locationId, setLocationId] = useState('');
   const [newLocationName, setNewLocationName] = useState('');
   const [notes, setNotes] = useState('');
+  const [sessionDate, setSessionDate] = useState(localSessionDate);
   // The photo is only uploaded to R2 on submit, not on selection — uploading
   // eagerly would leave an orphaned object in R2 whenever the user picks a
   // photo and then abandons the form without saving.
@@ -87,6 +89,10 @@ export function NewReport() {
     e.preventDefault();
     setSubmitError(null);
     setPictureError(null);
+    if (isFutureSessionDate(sessionDate)) {
+      setSubmitError('Training logs cannot be dated in the future.');
+      return;
+    }
     setSaving(true);
     try {
       let picture: string | null = uploadedPictureUrl;
@@ -113,6 +119,7 @@ export function NewReport() {
         skillIds,
         milestoneIds,
         distractions,
+        sessionDate,
       });
       if (!persisted) {
         setSubmitError(
@@ -140,6 +147,24 @@ export function NewReport() {
       </h1>
 
       <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label
+            htmlFor="session-date"
+            className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+          >
+            Training date
+          </label>
+          <input
+            id="session-date"
+            type="date"
+            value={sessionDate}
+            onChange={(e) => setSessionDate(e.target.value)}
+            required
+            className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-transparent px-3 py-2"
+            max={localSessionDate()}
+          />
+          <p className="mt-1 text-xs text-gray-500">Defaults to today; select an earlier date for a historical log.</p>
+        </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Phase
