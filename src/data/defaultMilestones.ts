@@ -1,4 +1,4 @@
-import type { MilestoneTemplate } from '../types';
+import { FINAL_OUTCOMES, type MilestoneTemplate } from '../types';
 
 interface MilestoneSeed {
   phase: MilestoneTemplate['phase'];
@@ -45,6 +45,7 @@ export function buildDefaultMilestones(): MilestoneTemplate[] {
     isFinalOutcomeMilestone: seed.title === 'Advanced Final Blindfold',
     // #33 names these two as the milestones that need to be retakeable —
     // the final evaluation itself, and traffic training at any phase.
+    allowedOutcomes: [...FINAL_OUTCOMES],
     repeatable: seed.title === 'Advanced Final Blindfold' || seed.title.startsWith('Traffic Training'),
     createdDate: now,
     updatedDate: now,

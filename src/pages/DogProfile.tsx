@@ -5,7 +5,7 @@ import {
   localSessionDate,
   storedLocalCalendarDate,
 } from '../../shared/sessionDate';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { MoveDialog } from '../components/MoveDialog';
 import { PencilIcon, TrashIcon } from '../components/icons';
@@ -51,7 +51,6 @@ import {
 } from '../data/store';
 import {
   DISTRACTION_SEVERITIES,
-  FINAL_OUTCOMES,
   PHASES,
   type DistractionSeverity,
   type DistractionTemplate,
@@ -275,7 +274,13 @@ function RepeatableMilestoneOutcome({
 }) {
   const attempts = useMilestoneAttempts(dogId, milestone.id);
   const [recording, setRecording] = useState(false);
-  const [outcome, setOutcome] = useState<FinalOutcome>('Placement Ready');
+  const [outcome, setOutcome] = useState<FinalOutcome>(milestone.allowedOutcomes[0] ?? 'Placement Ready');
+
+  useEffect(() => {
+    if (!milestone.allowedOutcomes.includes(outcome)) {
+      setOutcome(milestone.allowedOutcomes[0] ?? 'Placement Ready');
+    }
+  }, [milestone.allowedOutcomes, outcome]);
   const [notes, setNotes] = useState('');
 
   function handleRecord(e: React.FormEvent) {
@@ -291,7 +296,7 @@ function RepeatableMilestoneOutcome({
     recordMilestoneOutcomeAttempt(dogId, milestone.id, outcome, notes.trim() || null);
     setRecording(false);
     setNotes('');
-    setOutcome('Placement Ready');
+    setOutcome(milestone.allowedOutcomes[0] ?? 'Placement Ready');
   }
 
   function handleUndo() {
@@ -357,7 +362,7 @@ function RepeatableMilestoneOutcome({
             onChange={(e) => setOutcome(e.target.value as FinalOutcome)}
             className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-transparent px-2 py-1 text-sm"
           >
-            {FINAL_OUTCOMES.map((o) => (
+            {milestone.allowedOutcomes.map((o) => (
               <option key={o} value={o}>
                 {o}
               </option>
@@ -390,6 +395,32 @@ function RepeatableMilestoneOutcome({
     </li>
   );
 }
+
+function PreservedMilestoneAttemptHistory({
+  dogId,
+  milestone,
+}: {
+  dogId: string;
+  milestone: MilestoneTemplate;
+}) {
+  const attempts = useMilestoneAttempts(dogId, milestone.id);
+  if (attempts.length === 0) return null;
+
+  return (
+    <ul className="ml-6 space-y-0.5 text-xs text-gray-500">
+      {attempts.map((attempt) => (
+        <li key={attempt.id}>
+          {OUTCOME_ICONS[attempt.outcome]} {attempt.outcome} —{' '}
+          {attempt.migratedFromLegacyCompletion
+            ? 'date unknown (migrated)'
+            : new Date(attempt.attemptDate).toLocaleDateString()}
+          {attempt.notes && <> — {attempt.notes}</>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 
 export function DogProfile() {
   const { dogId } = useParams<{ dogId: string }>();
@@ -1034,7 +1065,12 @@ export function DogProfile() {
                       className="rounded-md border border-gray-300 dark:border-gray-600 bg-transparent px-2 py-1"
                     >
                       <option value="">No decision yet</option>
-                      {FINAL_OUTCOMES.map((outcome) => (
+                      {completion?.outcome && !m.allowedOutcomes.includes(completion.outcome) && (
+                        <option value={completion.outcome} disabled>
+                          {completion.outcome} (historical)
+                        </option>
+                      )}
+                      {m.allowedOutcomes.map((outcome) => (
                         <option key={outcome} value={outcome}>
                           {outcome}
                         </option>
@@ -1072,6 +1108,17 @@ export function DogProfile() {
                     </span>
                   )}
                 </label>
+                {completion?.outcome && (
+                  <span className={`ml-6 text-xs font-medium ${OUTCOME_STYLES[completion.outcome]}`}>
+                    Preserved outcome: {OUTCOME_ICONS[completion.outcome]} {completion.outcome}
+                  </span>
+                )}
+                {m.repeatable && (
+                  <PreservedMilestoneAttemptHistory
+                    dogId={dog.id}
+                    milestone={m}
+                  />
+                )}
               </li>
             );
           })}

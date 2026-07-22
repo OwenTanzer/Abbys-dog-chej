@@ -14,6 +14,7 @@ import type {
 } from '../types';
 import { buildDefaultChecklist } from './defaultChecklist';
 import { buildDefaultMilestones } from './defaultMilestones';
+import { backfillAllowedOutcomes } from '../lib/outcomeConfig';
 
 export interface Database {
   folders: Folder[];
@@ -100,6 +101,7 @@ function migrateLegacyMilestones(legacy: LegacyMilestone[]): {
           title: m.title,
           sortOrder: milestoneTemplates.length,
           isFinalOutcomeMilestone: false,
+          allowedOutcomes: backfillAllowedOutcomes(),
           repeatable: false,
           createdDate: m.createdDate,
           updatedDate: m.updatedDate,
@@ -157,12 +159,14 @@ function backfillDogs(dogs: Dog[]): Dog[] {
   );
 }
 
-// Templates predating the final-outcome flag, or the repeatable flag (#33),
-// won't have those stored.
+// Templates predating configurable outcomes or the repeatable flag (#33)
+// won't have those stored. An absent/invalid list preserves the legacy
+// behavior by allowing every outcome.
 function backfillMilestoneTemplates(templates: MilestoneTemplate[]): MilestoneTemplate[] {
   return templates.map((template) => ({
     ...template,
     isFinalOutcomeMilestone: template.isFinalOutcomeMilestone ?? false,
+    allowedOutcomes: backfillAllowedOutcomes(template.allowedOutcomes),
     repeatable: template.repeatable ?? false,
   }));
 }

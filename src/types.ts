@@ -200,6 +200,11 @@ export interface MilestoneTemplate {
   // milestone gets an outcome picker (Placement Ready / Additional
   // Objectives / Fail) on the dog profile instead of a plain checkbox.
   isFinalOutcomeMilestone: boolean;
+  // Outcomes offered for future decisions while the prompt is enabled.
+  // Existing completions and attempts may retain a value removed from this
+  // list; configuration changes never rewrite dog history.
+  allowedOutcomes: FinalOutcome[];
+
   // Only meaningful alongside isFinalOutcomeMilestone (#33): most milestones
   // are a one-time decision, overwritten in place if corrected — a plain
   // checkbox/select. A repeatable one (the final test itself, traffic

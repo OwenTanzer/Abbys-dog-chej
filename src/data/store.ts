@@ -38,6 +38,11 @@ import { buildDefaultMilestones } from './defaultMilestones';
 import { logError, logEvent } from '../lib/diagnostics';
 import { ApiError, fetchData, putData, transferDog, uploadPhoto } from '../lib/api';
 import { dataUrlToBlob } from '../lib/compressImage';
+import {
+  backfillAllowedOutcomes,
+  canonicalAllowedOutcomes,
+  isMilestoneOutcomeAllowed,
+} from '../lib/outcomeConfig';
 
 let db: Database = emptyDatabase();
 let currentInstructorId: string | null = null;
@@ -1259,6 +1264,7 @@ export function createMilestoneTemplate(phase: Phase, title: string): MilestoneT
     title,
     sortOrder: siblingCount,
     isFinalOutcomeMilestone: false,
+    allowedOutcomes: backfillAllowedOutcomes(),
     repeatable: false,
     createdDate: now(),
     updatedDate: now(),
@@ -1287,6 +1293,9 @@ export function toggleMilestoneFinalOutcomeFlag(id: string): boolean {
   if (!template) return false;
   template.isFinalOutcomeMilestone = !template.isFinalOutcomeMilestone;
   template.updatedDate = now();
+  if (template.isFinalOutcomeMilestone) {
+    template.allowedOutcomes = backfillAllowedOutcomes(template.allowedOutcomes);
+  }
   const persisted = notify();
   logEvent(
     'Milestone final-outcome flag toggled',
@@ -1305,6 +1314,23 @@ export function toggleMilestoneFinalOutcomeFlag(id: string): boolean {
 // those fall back to today's date and are flagged
 // migratedFromLegacyCompletion so the UI can say "date unknown (migrated)"
 // instead of presenting a fabricated date as fact.
+
+// Changes which choices are offered for future decisions. Existing dog
+// completions and repeatable-attempt history are deliberately untouched.
+export function setMilestoneAllowedOutcomes(
+  id: string,
+  outcomes: readonly FinalOutcome[],
+): boolean {
+  const template = db.milestoneTemplates.find((m) => m.id === id);
+  const allowedOutcomes = canonicalAllowedOutcomes(outcomes);
+  if (!template || allowedOutcomes.length === 0) return false;
+  template.allowedOutcomes = allowedOutcomes;
+  template.updatedDate = now();
+  const persisted = notify();
+  logEvent('Milestone allowed outcomes updated', `${id} -> ${allowedOutcomes.join(', ')}`);
+  return persisted;
+}
+
 export function toggleMilestoneRepeatable(id: string): boolean {
   const template = db.milestoneTemplates.find((m) => m.id === id);
   if (!template) return false;
@@ -1484,6 +1510,9 @@ export function setMilestoneOutcome(
   milestoneTemplateId: string,
   outcome: FinalOutcome | null,
 ): boolean {
+  const template = db.milestoneTemplates.find((m) => m.id === milestoneTemplateId);
+  if (!template || template.repeatable) return false;
+  if (outcome !== null && !isMilestoneOutcomeAllowed(template, outcome)) return false;
   applyMilestoneOutcomeState(dogId, milestoneTemplateId, outcome);
   const persisted = notify();
   logEvent(
@@ -1504,6 +1533,8 @@ export function recordMilestoneOutcomeAttempt(
   outcome: FinalOutcome,
   notes: string | null = null,
 ): boolean {
+  const template = db.milestoneTemplates.find((m) => m.id === milestoneTemplateId);
+  if (!template?.repeatable || !isMilestoneOutcomeAllowed(template, outcome)) return false;
   db.milestoneOutcomeAttempts.push({
     id: uid(),
     dogId,

@@ -14,13 +14,14 @@ import {
   reorderChecklistItems,
   reorderDistractionTemplates,
   reorderMilestoneTemplates,
+  setMilestoneAllowedOutcomes,
   toggleMilestoneFinalOutcomeFlag,
   toggleMilestoneRepeatable,
   useChecklistItems,
   useDistractionTemplates,
   useMilestoneTemplates,
 } from '../data/store';
-import { PHASES, type Phase } from '../types';
+import { FINAL_OUTCOMES, PHASES, type FinalOutcome, type Phase } from '../types';
 
 export function ManageTemplates() {
   const [phase, setPhase] = useState<Phase>('Phase 1');
@@ -117,6 +118,53 @@ export function ManageTemplates() {
             </>
           )}
         />
+        <div className="mt-3 space-y-2">
+          {milestones
+            .filter((item) => item.isFinalOutcomeMilestone)
+            .map((item) => (
+              <div
+                key={item.id}
+                className="rounded-lg border border-gray-200 p-3 dark:border-gray-700"
+              >
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                    {item.title} outcome prompt
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => toggleMilestoneRepeatable(item.id)}
+                    className={`rounded-md border px-2 py-1 text-xs font-medium ${
+                      item.repeatable
+                        ? 'border-emerald-300 bg-emerald-50 text-emerald-600 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-400'
+                        : 'border-gray-300 text-gray-500 dark:border-gray-600'
+                    }`}
+                  >
+                    Repeatable: {item.repeatable ? 'On' : 'Off'}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                  {FINAL_OUTCOMES.map((outcome: FinalOutcome) => {
+                    const checked = item.allowedOutcomes.includes(outcome);
+                    return (
+                      <label key={outcome} className="flex items-center gap-1.5 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={checked && item.allowedOutcomes.length === 1}
+                          onChange={() => setMilestoneAllowedOutcomes(item.id, checked ? item.allowedOutcomes.filter((value) => value !== outcome) : [...item.allowedOutcomes, outcome])}
+                        />
+                        {outcome}
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-gray-400">
+                  These choices apply to future prompts only. Existing dog outcomes and attempt history are preserved.
+                </p>
+              </div>
+            ))}
+        </div>
+
         <p className="text-xs text-gray-400">
           Flag one milestone (e.g. "Advanced Final Blindfold") as the final outcome — dog
           profiles get a Placement Ready / Additional Objectives / Fail picker for it instead of
